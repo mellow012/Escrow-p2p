@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "358632276223",
+    "firebase_url": "https://escrowp2p-2b1ea-default-rtdb.firebaseio.com",
+    "project_id": "escrowp2p-2b1ea",
+    "storage_bucket": "escrowp2p-2b1ea.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:358632276223:android:91c9bf6ffac5b88cb68cca",
+        "android_client_info": {
+          "package_name": "com.escrowmalawi"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "358632276223-64dma8fskpn3r4nte293sh6m280nbqjd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.escrowmalawi",
+            "certificate_hash": "24a76fdf1878fbc71a9c47ed8e8d408d9db2dcdc"
+          }
+        },
+        {
+          "client_id": "358632276223-1jse8ssb3uh3eissq1r02enp7sogoh3v.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAGaRazGFPYV8oxK03ucJ6DowQGB1EHrOk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "358632276223-1jse8ssb3uh3eissq1r02enp7sogoh3v.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
