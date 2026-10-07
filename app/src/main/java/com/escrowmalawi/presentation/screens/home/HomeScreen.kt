@@ -24,8 +24,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.tooling.preview.Preview
 import com.escrowmalawi.data.model.Listing
+import com.escrowmalawi.data.model.Trade
 import com.escrowmalawi.data.model.TradeStatus
+import com.escrowmalawi.data.model.User
 import com.escrowmalawi.presentation.theme.*
 import com.escrowmalawi.presentation.viewmodel.AuthViewModel
 import com.escrowmalawi.presentation.viewmodel.MarketplaceViewModel
@@ -51,8 +54,43 @@ fun HomeScreen(
     val buyerTrades  by tradeViewModel.buyerTrades.collectAsState()
     val sellerTrades by tradeViewModel.sellerTrades.collectAsState()
     val listings     by marketplaceViewModel.listings.collectAsState()
+    val sellerRatings by marketplaceViewModel.sellerRatings.collectAsState()
     val unreadCount  by notificationViewModel.unreadCount.collectAsState()
 
+    HomeScreenContent(
+        currentUser = currentUser,
+        buyerTrades = buyerTrades,
+        sellerTrades = sellerTrades,
+        listings = listings,
+        sellerRatings = sellerRatings,
+        unreadCount = unreadCount,
+        onNavigateToMarketplace = onNavigateToMarketplace,
+        onNavigateToTrades = onNavigateToTrades,
+        onNavigateToMyListings = onNavigateToMyListings,
+        onNavigateToCreateListing = onNavigateToCreateListing,
+        onNavigateToProfile = onNavigateToProfile,
+        onNavigateToNotifications = onNavigateToNotifications,
+        onListingClick = onListingClick
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeScreenContent(
+    currentUser: User?,
+    buyerTrades: List<Trade>,
+    sellerTrades: List<Trade>,
+    listings: List<Listing>,
+    sellerRatings: Map<String, Pair<Double, Int>>,
+    unreadCount: Int,
+    onNavigateToMarketplace: () -> Unit,
+    onNavigateToTrades: () -> Unit,
+    onNavigateToMyListings: () -> Unit,
+    onNavigateToCreateListing: () -> Unit,
+    onNavigateToProfile: () -> Unit,
+    onNavigateToNotifications: () -> Unit,
+    onListingClick: (String) -> Unit
+) {
     val allTrades    = (buyerTrades + sellerTrades).distinctBy { it.id }
     val pendingCount = allTrades.count { it.status == TradeStatus.PENDING.name }
     val activeCount  = allTrades.count { it.status == TradeStatus.ACTIVE.name }
@@ -247,7 +285,7 @@ fun HomeScreen(
                 }
             } else {
                 items(featuredListings, key = { it.id }) { listing ->
-                    ListingRow(listing, { onListingClick(listing.id) })
+                    ListingRow(listing, sellerRatings[listing.sellerUid], { onListingClick(listing.id) })
                     Spacer(Modifier.height(8.dp))
                 }
             }
@@ -333,7 +371,7 @@ private fun QuickAction(modifier: Modifier, icon: ImageVector, label: String, ti
 }
 
 @Composable
-private fun ListingRow(listing: Listing, onClick: () -> Unit) {
+private fun ListingRow(listing: Listing, sellerRating: Pair<Double, Int>?, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier
@@ -376,11 +414,25 @@ private fun ListingRow(listing: Listing, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     fontSize = 14.sp
                 )
-                Text(
-                    "by ${listing.sellerName}",
-                    fontSize = 11.sp,
-                    color = OnSurfaceDark.copy(0.4f)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "by ${listing.sellerName}",
+                        fontSize = 11.sp,
+                        color = OnSurfaceDark.copy(0.4f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val (avg, count) = sellerRating ?: Pair(0.0, 0)
+                    if (count > 0) {
+                        Icon(Icons.Default.Star, null, tint = EscrowAmber, modifier = Modifier.size(11.dp))
+                        Text(
+                            "%.1f".format(avg),
+                            fontSize = 11.sp,
+                            color = EscrowAmber,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             }
 
             Column(horizontalAlignment = Alignment.End) {
@@ -393,5 +445,76 @@ private fun ListingRow(listing: Listing, onClick: () -> Unit) {
                 Text("Escrow", fontSize = 10.sp, color = EscrowGreenLight.copy(0.7f))
             }
         }
+    }
+}
+
+// ── Previews ─────────────────────────────────────────────────────────────────
+
+@Preview(name = "Home Screen Preview", showBackground = true)
+@Composable
+fun HomeScreenPreview() {
+    val sampleUser = User(
+        uid = "user1",
+        name = "Chikondi Phiri",
+        email = "chikondi@example.com"
+    )
+
+    val sampleListings = listOf(
+        Listing(
+            id = "list1",
+            sellerUid = "user2",
+            sellerName = "Limbani Banda",
+            title = "iPhone 13 Pro Max",
+            description = "Excellent condition, 256GB battery health 89%",
+            price = 850000.0,
+            imageUrls = emptyList()
+        ),
+        Listing(
+            id = "list2",
+            sellerUid = "user3",
+            sellerName = "Aisha Mussa",
+            title = "Toyota Vitz 2015",
+            description = "Silver color, low mileage, neatly driven",
+            price = 4500000.0,
+            imageUrls = emptyList()
+        )
+    )
+
+    val sampleTrades = listOf(
+        Trade(
+            id = "trade1",
+            buyerUid = "user1",
+            sellerUid = "user2",
+            status = TradeStatus.PENDING.name
+        ),
+        Trade(
+            id = "trade2",
+            buyerUid = "user1",
+            sellerUid = "user3",
+            status = TradeStatus.ACTIVE.name
+        )
+    )
+
+    val sampleSellerRatings = mapOf(
+        "user2" to Pair(4.8, 12),
+        "user3" to Pair(4.5, 5)
+    )
+
+    EscrowMalawiTheme {
+        HomeScreenContent(
+            currentUser = sampleUser,
+            buyerTrades = sampleTrades,
+            sellerTrades = emptyList(),
+            listings = sampleListings,
+            sellerRatings = sampleSellerRatings,
+            unreadCount = 3,
+            onNavigateToMarketplace = {},
+            onNavigateToTrades = {},
+            onNavigateToMyListings = {},
+            onNavigateToCreateListing = {},
+            onNavigateToProfile = {},
+            onNavigateToNotifications = {},
+            onListingClick = {}
+        )
     }
 }

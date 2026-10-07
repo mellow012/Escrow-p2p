@@ -1,6 +1,5 @@
 package com.escrowmalawi.di
 
-import com.escrowmalawi.blockchain.EthereumService
 import com.escrowmalawi.data.local.WalletManager
 import com.google.firebase.firestore.FirebaseFirestore
 import dagger.Module
@@ -40,18 +39,10 @@ object AppModule {
     @Provides @Named("cloudinaryUploadPreset")
     fun provideCloudinaryUploadPreset(): String = "escrow-malawi-app"  // ← replace
 
-    // ── Ethereum / Web3j ──────────────────────────────────────────────────
-    @Provides @Named("rpcUrl")
-    fun provideRpcUrl(): String =
-        "https://sepolia.infura.io/v3/YOUR_INFURA_PROJECT_ID"
-
-    @Provides @Named("contractAddress")
-    fun provideContractAddress(): String =
-        "0xYOUR_DEPLOYED_CONTRACT_ADDRESS"
-
-    @Provides @Singleton
-    fun provideEthereumService(
-        @Named("rpcUrl") rpcUrl: String,
-        @Named("contractAddress") contractAddress: String
-    ): EthereumService = EthereumService(rpcUrl, contractAddress)
+    // ── PayChangu backend (Next.js API — see /paychangu-backend) ──────────
+    // Replace with your actual Vercel deployment URL once deployed, e.g.
+    // "https://escrow-p2p-paychangu.vercel.app" — no trailing slash.
+    @Provides @Named("paychanguBackendUrl")
+    fun providePaychanguBackendUrl(): String =
+        "https://paychangu-backend-mobile.vercel.app"  // ← replace
 }

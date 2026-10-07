@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.escrowmalawi.presentation.theme.*
 import com.escrowmalawi.presentation.viewmodel.AuthViewModel
+import com.escrowmalawi.presentation.viewmodel.TradeViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -42,9 +43,12 @@ fun ProfileScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit,
     onVerifyClick: () -> Unit = {},
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    tradeViewModel: TradeViewModel = hiltViewModel()
 ) {
     val currentUser by authViewModel.currentUser.collectAsState()
+    val buyerTrades by tradeViewModel.buyerTrades.collectAsState()
+    val sellerTrades by tradeViewModel.sellerTrades.collectAsState()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -119,7 +123,7 @@ fun ProfileScreen(
                 fontWeight = FontWeight.Bold,
                 color = OnSurfaceDark
             )
-            
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -141,9 +145,12 @@ fun ProfileScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                ProfileStat("12", "Trades")
+                val completedTradeCount = (buyerTrades + sellerTrades).count { it.status == com.escrowmalawi.data.model.TradeStatus.COMPLETED.name }
+                ProfileStat(completedTradeCount.toString(), "Trades")
                 VerticalDivider(modifier = Modifier.height(30.dp).align(Alignment.CenterVertically), thickness = 1.dp, color = OnSurfaceDark.copy(0.1f))
-                ProfileStat("4.9", "Rating")
+                val ratingCount = currentUser?.ratingCount ?: 0
+                val ratingLabel = if (ratingCount > 0) "%.1f".format(currentUser?.avgRating ?: 0.0) else "—"
+                ProfileStat(ratingLabel, if (ratingCount > 0) "Rating ($ratingCount)" else "Rating")
                 VerticalDivider(modifier = Modifier.height(30.dp).align(Alignment.CenterVertically), thickness = 1.dp, color = OnSurfaceDark.copy(0.1f))
                 ProfileStat(joinedDate, "Joined")
             }
@@ -184,7 +191,7 @@ fun ProfileScreen(
                 color = EscrowGreenLight
             )
             Spacer(Modifier.height(12.dp))
-            
+
             Card(
                 colors = CardDefaults.cardColors(containerColor = SurfaceDark),
                 shape = RoundedCornerShape(16.dp),
@@ -196,8 +203,8 @@ fun ProfileScreen(
                     ProfileInfoRow(Icons.Default.Phone, "Phone", currentUser?.phone ?: "-")
                     HorizontalDivider(color = OnSurfaceDark.copy(0.05f), modifier = Modifier.padding(vertical = 12.dp))
                     ProfileInfoRow(
-                        Icons.Default.AccountBalanceWallet, 
-                        "Wallet Address", 
+                        Icons.Default.AccountBalanceWallet,
+                        "Wallet Address",
                         currentUser?.walletAddress?.takeIf { it.isNotBlank() } ?: "Not linked",
                         isCopyable = currentUser?.walletAddress?.isNotBlank() == true,
                         onCopy = {
@@ -251,7 +258,7 @@ fun ProfileScreen(
                 Spacer(Modifier.width(10.dp))
                 Text("Logout from Device", color = EscrowRed, fontWeight = FontWeight.SemiBold)
             }
-            
+
             Spacer(Modifier.height(20.dp))
             Text(
                 "Version 1.0.0",
@@ -282,9 +289,9 @@ private fun ProfileStat(value: String, label: String) {
 
 @Composable
 private fun ProfileInfoRow(
-    icon: ImageVector, 
-    label: String, 
-    value: String, 
+    icon: ImageVector,
+    label: String,
+    value: String,
     isCopyable: Boolean = false,
     onCopy: () -> Unit = {}
 ) {
@@ -305,9 +312,9 @@ private fun ProfileInfoRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(label, fontSize = 12.sp, color = OnSurfaceDark.copy(0.6f))
             Text(
-                value, 
-                fontSize = 15.sp, 
-                fontWeight = FontWeight.Medium, 
+                value,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
                 color = OnSurfaceDark,
                 maxLines = 1
             )

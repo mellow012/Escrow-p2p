@@ -2,11 +2,8 @@ package com.escrowmalawi.domain.usecase
 
 import com.escrowmalawi.data.model.Trade
 import com.escrowmalawi.data.repository.AuthRepository
-import com.escrowmalawi.data.repository.EscrowRepository
 import com.escrowmalawi.data.repository.TradeRepository
 import com.google.firebase.auth.FirebaseUser
-import org.web3j.crypto.Credentials
-import java.math.BigInteger
 import javax.inject.Inject
 
 // ════════════════════════════════════════════════════════════════════════
@@ -121,40 +118,8 @@ class RejectTradeUseCase @Inject constructor(
 }
 
 // ════════════════════════════════════════════════════════════════════════
-//  ESCROW MODULE USE CASES
+//  ESCROW MODULE
 // ════════════════════════════════════════════════════════════════════════
-
-class LockFundsUseCase @Inject constructor(
-    private val escrowRepository: EscrowRepository
-) {
-    suspend operator fun invoke(
-        credentials      : Credentials,
-        tradeId          : String,
-        blockchainTradeId: String,
-        sellerAddress    : String,
-        itemDescription  : String,
-        amountWei        : BigInteger
-    ): Result<String> = escrowRepository.lockFunds(
-        credentials, tradeId, blockchainTradeId, sellerAddress, itemDescription, amountWei
-    )
-}
-
-class ReleaseFundsUseCase @Inject constructor(
-    private val escrowRepository: EscrowRepository
-) {
-    suspend operator fun invoke(
-        credentials      : Credentials,
-        tradeId          : String,
-        blockchainTradeId: String
-    ): Result<Unit> = escrowRepository.releaseFunds(credentials, tradeId, blockchainTradeId)
-}
-
-class RefundBuyerUseCase @Inject constructor(
-    private val escrowRepository: EscrowRepository
-) {
-    suspend operator fun invoke(
-        credentials      : Credentials,
-        tradeId          : String,
-        blockchainTradeId: String
-    ): Result<Unit> = escrowRepository.refundBuyer(credentials, tradeId, blockchainTradeId)
-}
+// No use-case wrappers here — EscrowViewModel calls EscrowRepository
+// directly (same lightweight pattern as Notification/Review), since the
+// PayChangu-backed flow has no extra validation logic worth wrapping.

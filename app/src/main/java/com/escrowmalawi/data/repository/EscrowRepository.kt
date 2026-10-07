@@ -1,102 +1,96 @@
 package com.escrowmalawi.data.repository
 
-import com.escrowmalawi.blockchain.EthereumService
-import org.web3j.crypto.Credentials
-import java.math.BigInteger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
  * Escrow Module – EscrowRepository
  *
- * Orchestrates:
- *  • Locking funds on-chain (buyer pays into smart contract)
- *  • Releasing funds on-chain (buyer confirms → seller gets paid)
- *  • Refunding buyer on-chain (seller fails → buyer refunded)
- *  • Mirrors each result into Firestore via TradeRepository
+ * Fiat escrow via PayChangu, replacing the earlier Web3j/Ethereum on-chain
+ * version. The actual "hold funds, then release" behaviour is enforced by
+ * when we tell the backend to move money — PayChangu itself has no concept
+ * of escrow, it just moves money from A to B. See /paychangu-backend for
+ * the server side of this flow.
+ *
+ * - Locking funds = buyer completes a PayChangu checkout into the
+ *   platform's own collection account. Confirmed asynchronously via the
+ *   backend's webhook, which writes trade.txHash directly in Firestore —
+ *   picked up automatically by TradeRepository's existing real-time
+ *   listeners, no polling needed here.
+ * - Releasing/refunding = simulated for this project's current scope: a
+ *   direct Firestore status update via TradeRepository, no real payout
+ *   call to PayChangu. See TradeRepository.markCompleted/markRefunded.
  */
 @Singleton
 class EscrowRepository @Inject constructor(
-    private val ethereumService: EthereumService,
+    @Named("paychanguBackendUrl") private val backendUrl: String,
     private val tradeRepository: TradeRepository
 ) {
     /**
-     * Lock funds in the smart contract.
-     * Called after the seller accepts the trade.
-     *
-     * @param credentials    Buyer's Ethereum credentials
-     * @param tradeId        Firestore document ID
-     * @param blockchainTradeId  keccak256 hash used as the on-chain key
-     * @param sellerAddress  Seller's Ethereum wallet address
-     * @param itemDescription Trade description
-     * @param amountWei      Amount to lock, in Wei
+     * Calls the backend to create a PayChangu Standard Checkout session for
+     * this trade. Returns the checkout URL to open in a browser/Custom Tab.
+     * The backend reads the authoritative amount from Firestore itself —
+     * we don't send it from the client.
      */
-    suspend fun lockFunds(
-        credentials: Credentials,
+    suspend fun initiateCheckout(
         tradeId: String,
-        blockchainTradeId: String,
-        sellerAddress: String,
-        itemDescription: String,
-        amountWei: BigInteger
-    ): Result<String> {
-        val result = ethereumService.createAndLockFunds(
-            credentials, blockchainTradeId, sellerAddress, itemDescription, amountWei
-        )
-        return if (result.isSuccess) {
-            val txHash = result.getOrThrow()
-            tradeRepository.markFundsLocked(tradeId, txHash)
-            Result.success(txHash)
-        } else {
-            Result.failure(result.exceptionOrNull()!!)
+        buyerEmail: String,
+        buyerName: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$backendUrl/api/paychangu/initiate")
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("Content-Type", "application/json")
+            }
+
+            val body = JSONObject().apply {
+                put("tradeId", tradeId)
+                put("buyerEmail", buyerEmail)
+                put("buyerName", buyerName)
+            }
+
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+            val responseText = stream.bufferedReader().use { it.readText() }
+
+            if (responseCode !in 200..299) {
+                val errorMsg = try {
+                    JSONObject(responseText).optString("error", "Payment initiation failed")
+                } catch (_: Exception) {
+                    "Payment initiation failed (HTTP $responseCode)"
+                }
+                return@withContext Result.failure(Exception(errorMsg))
+            }
+
+            val json = JSONObject(responseText)
+            val checkoutUrl = json.optString("checkoutUrl")
+            if (checkoutUrl.isBlank()) {
+                return@withContext Result.failure(Exception("Server did not return a checkout URL"))
+            }
+
+            Result.success(checkoutUrl)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
-    /**
-     * Release funds to the seller.
-     * Buyer calls this after confirming delivery.
-     */
-    suspend fun releaseFunds(
-        credentials: Credentials,
-        tradeId: String,
-        blockchainTradeId: String
-    ): Result<Unit> {
-        val result = ethereumService.releaseFunds(credentials, blockchainTradeId)
-        return if (result.isSuccess) {
-            val txHash = result.getOrThrow()
-            tradeRepository.markCompleted(tradeId, txHash)
-        } else {
-            Result.failure(result.exceptionOrNull()!!)
-        }
-    }
+    /** Simulated release — buyer confirmed receipt. No real payout call yet. */
+    suspend fun releaseFunds(tradeId: String): Result<Unit> =
+        tradeRepository.markCompleted(tradeId, txHash = "SIMULATED_RELEASE")
 
-    /**
-     * Refund the buyer.
-     * Called when seller fails to deliver.
-     */
-    suspend fun refundBuyer(
-        credentials: Credentials,
-        tradeId: String,
-        blockchainTradeId: String
-    ): Result<Unit> {
-        val result = ethereumService.refundBuyer(credentials, blockchainTradeId)
-        return if (result.isSuccess) {
-            val txHash = result.getOrThrow()
-            tradeRepository.markRefunded(tradeId, txHash)
-        } else {
-            Result.failure(result.exceptionOrNull()!!)
-        }
-    }
-
-    /**
-     * Read-only: returns how much Wei is locked for a given trade.
-     */
-    suspend fun getLockedAmount(blockchainTradeId: String): BigInteger =
-        ethereumService.getLockedAmount(blockchainTradeId)
-
-    /**
-     * Helper to build credentials from a raw private key string.
-     * In production, retrieve this from Android Keystore, not plain storage.
-     */
-    fun buildCredentials(privateKeyHex: String): Credentials =
-        ethereumService.buildCredentials(privateKeyHex)
+    /** Simulated refund — no real payout call yet. */
+    suspend fun refundBuyer(tradeId: String): Result<Unit> =
+        tradeRepository.markRefunded(tradeId, txHash = "SIMULATED_REFUND")
 }

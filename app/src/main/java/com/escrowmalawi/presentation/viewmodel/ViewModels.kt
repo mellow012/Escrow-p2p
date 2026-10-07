@@ -13,8 +13,6 @@ import com.escrowmalawi.domain.usecase.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import org.web3j.crypto.Credentials
-import java.math.BigInteger
 import javax.inject.Inject
 
 // ════════════════════════════════════════════════════════════════════════
@@ -39,8 +37,17 @@ sealed class TradeUiState {
 sealed class EscrowUiState {
     object Idle    : EscrowUiState()
     object Loading : EscrowUiState()
-    data class Success(val txHash: String = "") : EscrowUiState()
+    /** PayChangu checkout session created — app should open this URL. */
+    data class CheckoutReady(val checkoutUrl: String) : EscrowUiState()
+    data class Success(val message: String = "") : EscrowUiState()
     data class Error(val message: String) : EscrowUiState()
+}
+
+sealed class ReviewUiState {
+    object Idle    : ReviewUiState()
+    object Loading : ReviewUiState()
+    object Success : ReviewUiState()
+    data class Error(val message: String) : ReviewUiState()
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -148,7 +155,7 @@ class AuthViewModel @Inject constructor(
                     ?: throw IllegalStateException("User not logged in")
 
                 var imageUrl = _currentUser.value?.profilePictureUrl ?: ""
-                
+
                 if (imageUri != null) {
                     val uploadResult = storageRepository.uploadListingImage(context, "profile_$uid", imageUri)
                     if (uploadResult.isSuccess) {
@@ -260,65 +267,101 @@ class TradeViewModel @Inject constructor(
 
 @HiltViewModel
 class EscrowViewModel @Inject constructor(
-    private val lockFundsUseCase   : LockFundsUseCase,
-    private val releaseFundsUseCase: ReleaseFundsUseCase,
-    private val refundBuyerUseCase : RefundBuyerUseCase,
-    private val escrowRepository   : EscrowRepository,
-    private val walletManager      : com.escrowmalawi.data.local.WalletManager,
-    private val authRepository     : AuthRepository
+    private val escrowRepository: EscrowRepository,
+    private val authRepository  : AuthRepository
 ) : ViewModel() {
 
-    private val _uiState    = MutableStateFlow<EscrowUiState>(EscrowUiState.Idle)
+    private val _uiState = MutableStateFlow<EscrowUiState>(EscrowUiState.Idle)
     val uiState: StateFlow<EscrowUiState> = _uiState.asStateFlow()
 
-    private val _lockedAmount = MutableStateFlow(BigInteger.ZERO)
-    val lockedAmount: StateFlow<BigInteger> = _lockedAmount.asStateFlow()
-
-    fun getStoredPrivateKey(): String? {
-        val uid = authRepository.currentFirebaseUser()?.uid ?: return null
-        return walletManager.getPrivateKey(uid)
-    }
-
-    fun lockFunds(
-        privateKeyHex: String, tradeId: String, blockchainTradeId: String,
-        sellerAddress: String, itemDescription: String, amountWei: BigInteger
-    ) {
+    /** Buyer taps "Lock Funds" — creates a PayChangu checkout session. */
+    fun initiateCheckout(tradeId: String) {
         viewModelScope.launch {
             _uiState.value = EscrowUiState.Loading
-            val creds  = escrowRepository.buildCredentials(privateKeyHex)
-            val result = lockFundsUseCase(creds, tradeId, blockchainTradeId, sellerAddress, itemDescription, amountWei)
-            _uiState.value = if (result.isSuccess) EscrowUiState.Success(result.getOrDefault(""))
-            else EscrowUiState.Error(result.exceptionOrNull()?.message ?: "Failed to lock funds")
+            val buyer = authRepository.currentUserProfile()
+            if (buyer == null) {
+                _uiState.value = EscrowUiState.Error("You must be logged in to make a payment")
+                return@launch
+            }
+            val result = escrowRepository.initiateCheckout(
+                tradeId = tradeId,
+                buyerEmail = buyer.email,
+                buyerName = buyer.name
+            )
+            _uiState.value = if (result.isSuccess) EscrowUiState.CheckoutReady(result.getOrThrow())
+            else EscrowUiState.Error(result.exceptionOrNull()?.message ?: "Failed to start payment")
         }
     }
 
-    fun releaseFunds(privateKeyHex: String, tradeId: String, blockchainTradeId: String) {
+    /** Buyer confirms receipt — simulated release, no real payout call. */
+    fun releaseFunds(tradeId: String) {
         viewModelScope.launch {
             _uiState.value = EscrowUiState.Loading
-            val creds  = escrowRepository.buildCredentials(privateKeyHex)
-            val result = releaseFundsUseCase(creds, tradeId, blockchainTradeId)
+            val result = escrowRepository.releaseFunds(tradeId)
             _uiState.value = if (result.isSuccess) EscrowUiState.Success("Funds released to seller")
             else EscrowUiState.Error(result.exceptionOrNull()?.message ?: "Failed to release")
         }
     }
 
-    fun refundBuyer(privateKeyHex: String, tradeId: String, blockchainTradeId: String) {
+    /** Simulated refund, no real payout call. */
+    fun refundBuyer(tradeId: String) {
         viewModelScope.launch {
             _uiState.value = EscrowUiState.Loading
-            val creds  = escrowRepository.buildCredentials(privateKeyHex)
-            val result = refundBuyerUseCase(creds, tradeId, blockchainTradeId)
+            val result = escrowRepository.refundBuyer(tradeId)
             _uiState.value = if (result.isSuccess) EscrowUiState.Success("Buyer refunded")
             else EscrowUiState.Error(result.exceptionOrNull()?.message ?: "Failed to refund")
         }
     }
 
-    fun loadLockedAmount(blockchainTradeId: String) {
+    fun resetState() { _uiState.value = EscrowUiState.Idle }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  REVIEW VIEW MODEL
+// ════════════════════════════════════════════════════════════════════════
+
+@HiltViewModel
+class ReviewViewModel @Inject constructor(
+    private val reviewRepository: com.escrowmalawi.data.repository.ReviewRepository,
+    private val authRepository: AuthRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow<ReviewUiState>(ReviewUiState.Idle)
+    val uiState: StateFlow<ReviewUiState> = _uiState.asStateFlow()
+
+    fun submitReview(
+        tradeId: String,
+        ratedUid: String,
+        rating: Int,
+        comment: String
+    ) {
         viewModelScope.launch {
-            _lockedAmount.value = escrowRepository.getLockedAmount(blockchainTradeId)
+            _uiState.value = ReviewUiState.Loading
+            val rater = authRepository.currentUserProfile()
+            if (rater == null) {
+                _uiState.value = ReviewUiState.Error("You must be logged in to leave a review")
+                return@launch
+            }
+            val result = reviewRepository.submitReview(
+                tradeId = tradeId,
+                raterUid = rater.uid,
+                raterName = rater.name,
+                ratedUid = ratedUid,
+                rating = rating,
+                comment = comment
+            )
+            _uiState.value = if (result.isSuccess) ReviewUiState.Success
+            else ReviewUiState.Error(result.exceptionOrNull()?.message ?: "Failed to submit review")
         }
     }
 
-    fun resetState() { _uiState.value = EscrowUiState.Idle }
+    /** One-shot check used to decide whether to show the "Rate this trade" prompt. */
+    suspend fun hasReviewed(tradeId: String, raterUid: String): Boolean =
+        reviewRepository.hasReviewed(tradeId, raterUid).getOrDefault(false)
+
+    fun reviewsForUserFlow(uid: String) = reviewRepository.reviewsForUserFlow(uid)
+
+    fun resetState() { _uiState.value = ReviewUiState.Idle }
 }
 
 // ════════════════════════════════════════════════════════════════════════

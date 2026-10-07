@@ -61,6 +61,15 @@ class MarketplaceViewModel @Inject constructor(
         emitAll(listingRepository.myListingsFlow(uid))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // ── Seller ratings for whichever listings are currently visible ────────
+    // uid -> (avgRating, ratingCount). Recomputed whenever the visible seller
+    // set changes; used to show trust scores on listing rows.
+    val sellerRatings: StateFlow<Map<String, Pair<Double, Int>>> = listings
+        .map { it.map { listing -> listing.sellerUid }.distinct() }
+        .distinctUntilChanged()
+        .flatMapLatest { uids -> authRepository.usersRatingsFlow(uids) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     fun setSearchQuery(query: String)           { _searchQuery.value = query }
     fun setCategory(category: ListingCategory?) { _selectedCategory.value = category }
 
@@ -84,10 +93,10 @@ class MarketplaceViewModel @Inject constructor(
             if (price <= 0)      { _uiState.value = ListingUiState.Error("Enter a valid price"); return@launch }
 
             val profile = authRepository.currentUserProfile()
-                ?: run { 
+                ?: run {
                     android.util.Log.e("MarketplaceVM", "Auth user missing. Current user: ${authRepository.currentFirebaseUser()}")
                     _uiState.value = ListingUiState.Error("Auth error: No active session found.");
-                    return@launch 
+                    return@launch
                 }
 
             _uiState.value = ListingUiState.Loading

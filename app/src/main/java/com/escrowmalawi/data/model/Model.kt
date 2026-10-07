@@ -13,6 +13,8 @@ data class User(
     val profilePictureUrl: String = "",
     val isVerified: Boolean = false,
     val walletAddress: String = "",     // Ethereum wallet address (optional at registration)
+    val avgRating: Double = 0.0,        // Cached average of reviews received (0 if none yet)
+    val ratingCount: Int = 0,           // Cached count of reviews received
     val createdAt: Timestamp = Timestamp.now()
 )
 
@@ -102,4 +104,16 @@ data class Listing(
     val status      : String        = ListingStatus.ACTIVE.name,
     val createdAt   : Timestamp     = Timestamp.now(),
     val updatedAt   : Timestamp     = Timestamp.now()
+)
+
+// ── Review ───────────────────────────────────────────────────────────────────
+data class Review(
+    val id: String = "",
+    val tradeId: String = "",
+    val raterUid: String = "",      // who left the review
+    val raterName: String = "",
+    val ratedUid: String = "",      // who the review is about
+    val rating: Int = 5,            // 1..5
+    val comment: String = "",
+    val createdAt: Timestamp = Timestamp.now()
 )

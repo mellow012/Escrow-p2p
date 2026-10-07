@@ -1,5 +1,7 @@
 package com.escrowmalawi.presentation.screens.escrow
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,19 +19,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.escrowmalawi.data.model.Trade
 import com.escrowmalawi.data.model.TradeStatus
 import com.escrowmalawi.presentation.theme.*
 import com.escrowmalawi.presentation.viewmodel.EscrowUiState
 import com.escrowmalawi.presentation.viewmodel.EscrowViewModel
 import com.escrowmalawi.presentation.viewmodel.TradeViewModel
-import java.math.BigDecimal
-import java.math.BigInteger
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,44 +43,74 @@ fun EscrowScreen(
     val buyerTrades  by tradeViewModel.buyerTrades.collectAsState()
     val sellerTrades by tradeViewModel.sellerTrades.collectAsState()
     val escrowState  by escrowViewModel.uiState.collectAsState()
-    val lockedAmount by escrowViewModel.lockedAmount.collectAsState()
+    val context = LocalContext.current
 
     val trade  = (buyerTrades + sellerTrades).firstOrNull { it.id == tradeId }
     val isBuyer = trade?.buyerUid == currentUserUid
+    val fundsLocked = trade?.txHash?.isNotBlank() == true
 
-    var privateKeyHex    by remember { mutableStateOf("") }
-    var sellerEthAddress by remember { mutableStateOf("") }
-    var showKeyInput     by remember { mutableStateOf(false) }
+    var successMessage  by remember { mutableStateOf<String?>(null) }
     var pendingAction    by remember { mutableStateOf<EscrowAction?>(null) }
-    var successMessage   by remember { mutableStateOf<String?>(null) }
 
-    // Auto-fill private key and seller address when trade is loaded or action starts
-    LaunchedEffect(trade, showKeyInput) {
-        if (showKeyInput) {
-            if (privateKeyHex.isBlank()) {
-                escrowViewModel.getStoredPrivateKey()?.let {
-                    privateKeyHex = it
-                }
+    // Open the PayChangu checkout page in the browser as soon as it's ready
+    LaunchedEffect(escrowState) {
+        when (val state = escrowState) {
+            is EscrowUiState.CheckoutReady -> {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(state.checkoutUrl)))
+                escrowViewModel.resetState()
+                // No explicit "success" here — the payment itself completes
+                // asynchronously. The trade's real-time Firestore listener
+                // picks up trade.txHash once the backend webhook confirms
+                // the payment, and this screen re-renders automatically.
             }
-            if (pendingAction == EscrowAction.LOCK && sellerEthAddress.isBlank()) {
-                trade?.sellerWalletAddress?.let {
-                    sellerEthAddress = it
-                }
+            is EscrowUiState.Success -> {
+                successMessage = state.message
+                pendingAction = null
+                escrowViewModel.resetState()
             }
+            else -> {}
         }
     }
 
-    LaunchedEffect(trade) {
-        trade?.blockchainTradeId?.let { escrowViewModel.loadLockedAmount(it) }
-    }
-
-    LaunchedEffect(escrowState) {
-        if (escrowState is EscrowUiState.Success) {
-            val s = escrowState as EscrowUiState.Success
-            successMessage = if (s.txHash.isNotBlank()) s.txHash else "Transaction complete"
-            pendingAction  = null
-            escrowViewModel.resetState()
-            trade?.blockchainTradeId?.let { escrowViewModel.loadLockedAmount(it) }
+    // Confirm dialog for release/refund (no wallet key needed anymore)
+    pendingAction?.let { action ->
+        if (action != EscrowAction.LOCK) {
+            AlertDialog(
+                onDismissRequest = { pendingAction = null },
+                containerColor = SurfaceDark,
+                title = {
+                    Text(
+                        if (action == EscrowAction.RELEASE) "Release funds to seller?" else "Refund the buyer?",
+                        fontWeight = FontWeight.Bold,
+                        color = OnSurfaceDark
+                    )
+                },
+                text = {
+                    Text(
+                        if (action == EscrowAction.RELEASE)
+                            "Confirm you've received the item. This marks the trade as completed."
+                        else
+                            "This marks the trade as refunded.",
+                        color = OnSurfaceDark.copy(0.7f)
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (action == EscrowAction.RELEASE) escrowViewModel.releaseFunds(tradeId)
+                            else escrowViewModel.refundBuyer(tradeId)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (action == EscrowAction.RELEASE) EscrowGreen else EscrowAmber
+                        )
+                    ) { Text("Confirm", fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingAction = null }) {
+                        Text("Cancel", color = OnSurfaceDark.copy(0.6f))
+                    }
+                }
+            )
         }
     }
 
@@ -118,7 +148,7 @@ fun EscrowScreen(
             TradeStatusHeader(trade.status)
 
             // ── Progress stepper ─────────────────────────────────────────
-            EscrowStepper(trade.status)
+            EscrowStepper(trade.status, fundsLocked)
 
             // ── Trade detail card ─────────────────────────────────────────
             Card(
@@ -131,21 +161,15 @@ fun EscrowScreen(
                     DetailRow(Icons.Default.Payments,             "Amount",        "MWK ${"%,.0f".format(trade.amount)}", EscrowGreen)
                     RowDivider()
                     DetailRow(Icons.Default.Person,               "Seller",        trade.sellerName.ifBlank { trade.sellerPhone })
-                    if (lockedAmount > BigInteger.ZERO) {
+                    if (fundsLocked) {
                         RowDivider()
-                        val ethFormatted = BigDecimal(lockedAmount)
-                            .divide(BigDecimal.TEN.pow(18))
-                            .setScale(6, java.math.RoundingMode.HALF_UP)
-                            .toPlainString()
-                        DetailRow(Icons.Default.AccountBalanceWallet, "Locked ETH",    "$ethFormatted ETH", EscrowGreen)
+                        DetailRow(Icons.Default.Receipt, "Payment Ref", trade.txHash, EscrowGreen)
                     }
-                    RowDivider()
-                    DetailRow(Icons.Default.Fingerprint,          "Blockchain ID",  trade.blockchainTradeId.take(14) + "…")
                 }
             }
 
             // ── Success message ───────────────────────────────────────────
-            successMessage?.let { txHash ->
+            successMessage?.let { message ->
                 Card(
                     colors = CardDefaults.cardColors(containerColor = EscrowGreen.copy(0.08f)),
                     shape  = RoundedCornerShape(16.dp),
@@ -167,10 +191,7 @@ fun EscrowScreen(
                         ) {
                             Icon(Icons.Default.CheckCircle, null, tint = EscrowGreen, modifier = Modifier.size(22.dp))
                         }
-                        Column {
-                            Text("Transaction Successful", fontWeight = FontWeight.Bold, color = EscrowGreen)
-                            Text("TX: ${txHash.take(28)}…", fontSize = 11.sp, color = OnSurfaceDark.copy(0.5f))
-                        }
+                        Text(message, fontWeight = FontWeight.Bold, color = EscrowGreen)
                     }
                 }
             }
@@ -188,164 +209,94 @@ fun EscrowScreen(
                     ) {
                         Icon(Icons.Default.Error, null, tint = EscrowRed, modifier = Modifier.size(22.dp))
                         Column {
-                            Text("Transaction Failed", fontWeight = FontWeight.Bold, color = EscrowRed)
+                            Text("Something went wrong", fontWeight = FontWeight.Bold, color = EscrowRed)
                             Text((escrowState as EscrowUiState.Error).message, fontSize = 12.sp, color = OnSurfaceDark.copy(0.6f))
                         }
                     }
                 }
             }
 
-            // ── Wallet key input ──────────────────────────────────────────
-            if (showKeyInput) {
+            if (!fundsLocked && trade.status == TradeStatus.ACTIVE.name && isBuyer) {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                    shape  = RoundedCornerShape(20.dp)
+                    colors = CardDefaults.cardColors(containerColor = EscrowAmber.copy(0.08f)),
+                    shape  = RoundedCornerShape(16.dp)
                 ) {
-                    Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Default.Key, null, tint = EscrowAmber, modifier = Modifier.size(18.dp))
-                            Text("Wallet Credentials", fontWeight = FontWeight.Bold, color = OnSurfaceDark)
-                        }
-                        Text(
-                            "⚠ Never share your private key with anyone. In production this would use Android Keystore.",
-                            fontSize = 11.sp,
-                            color = EscrowAmber.copy(0.8f),
-                            lineHeight = 16.sp
-                        )
-                        OutlinedTextField(
-                            value = privateKeyHex,
-                            onValueChange = { privateKeyHex = it },
-                            label = { Text("Private Key (Hex)") },
-                            leadingIcon = { Icon(Icons.Default.Key, null, tint = EscrowGreen) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape  = RoundedCornerShape(12.dp),
-                            colors = fieldColors()
-                        )
-                        if (pendingAction == EscrowAction.LOCK) {
-                            OutlinedTextField(
-                                value = sellerEthAddress,
-                                onValueChange = { sellerEthAddress = it },
-                                label = { Text("Seller ETH Address") },
-                                leadingIcon = { Icon(Icons.Default.AccountBalanceWallet, null, tint = EscrowGreen) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape  = RoundedCornerShape(12.dp),
-                                colors = fieldColors()
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(
-                                onClick = { showKeyInput = false; pendingAction = null },
-                                modifier = Modifier.weight(1f),
-                                shape  = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = OnSurfaceDark.copy(0.6f))
-                            ) { Text("Cancel") }
-
-                            Button(
-                                onClick = {
-                                    when (pendingAction) {
-                                        EscrowAction.LOCK -> {
-                                            val wei = BigDecimal.valueOf(trade.amount)
-                                                .multiply(BigDecimal.valueOf(1_000_000_000_000_000L)) // Convert to Wei
-                                                .toBigInteger()
-                                            
-                                            escrowViewModel.lockFunds(
-                                                privateKeyHex, trade.id, trade.blockchainTradeId,
-                                                sellerEthAddress, trade.itemDescription, wei
-                                            )
-                                        }
-                                        EscrowAction.RELEASE -> escrowViewModel.releaseFunds(
-                                            privateKeyHex, trade.id, trade.blockchainTradeId
-                                        )
-                                        EscrowAction.REFUND -> escrowViewModel.refundBuyer(
-                                            privateKeyHex, trade.id, trade.blockchainTradeId
-                                        )
-                                        null -> {}
-                                    }
-                                    showKeyInput = false
-                                },
-                                enabled  = privateKeyHex.isNotBlank(),
-                                modifier = Modifier.weight(1f),
-                                shape    = RoundedCornerShape(12.dp),
-                                colors   = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
-                            ) { Text("Confirm", fontWeight = FontWeight.Bold) }
-                        }
-                    }
+                    Text(
+                        "Tapping below opens PayChangu's secure checkout in your browser. Once payment completes, this screen updates automatically — no need to come back and refresh.",
+                        modifier = Modifier.padding(16.dp),
+                        fontSize = 12.sp,
+                        color = EscrowAmber.copy(0.9f)
+                    )
                 }
             }
 
             // ── Action buttons ────────────────────────────────────────────
-            if (!showKeyInput) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-                    if (escrowState is EscrowUiState.Loading) {
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                            shape  = RoundedCornerShape(16.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (escrowState is EscrowUiState.Loading) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                        shape  = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(20.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp, color = EscrowGreen)
-                                Text("Processing transaction…", color = OnSurfaceDark.copy(0.7f))
-                            }
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp, color = EscrowGreen)
+                            Text("Processing…", color = OnSurfaceDark.copy(0.7f))
                         }
-                    } else {
-                        when {
-                            // Buyer: lock funds when trade is accepted (ACTIVE) but no funds locked yet
-                            isBuyer && trade.status == TradeStatus.ACTIVE.name && lockedAmount == BigInteger.ZERO -> {
-                                EscrowActionBtn(
-                                    label = "Lock Funds in Escrow",
-                                    icon  = Icons.Default.Lock,
-                                    color = EscrowGreen
-                                ) { pendingAction = EscrowAction.LOCK; showKeyInput = true }
-                            }
+                    }
+                } else {
+                    when {
+                        // Buyer: pay into escrow when trade is accepted (ACTIVE) but not yet paid
+                        isBuyer && trade.status == TradeStatus.ACTIVE.name && !fundsLocked -> {
+                            EscrowActionBtn(
+                                label = "Lock Funds in Escrow",
+                                icon  = Icons.Default.Lock,
+                                color = EscrowGreen
+                            ) { escrowViewModel.initiateCheckout(tradeId) }
+                        }
 
-                            // Buyer: confirm receipt → release funds (Only if funds are actually locked)
-                            isBuyer && trade.status == TradeStatus.ACTIVE.name && lockedAmount > BigInteger.ZERO -> {
-                                EscrowActionBtn(
-                                    label = "Confirm Receipt & Release Funds",
-                                    icon  = Icons.Default.CheckCircle,
-                                    color = EscrowGreen
-                                ) { pendingAction = EscrowAction.RELEASE; showKeyInput = true }
-                            }
+                        // Buyer: confirm receipt → release funds (only once funds are actually locked)
+                        isBuyer && trade.status == TradeStatus.ACTIVE.name && fundsLocked -> {
+                            EscrowActionBtn(
+                                label = "Confirm Receipt & Release Funds",
+                                icon  = Icons.Default.CheckCircle,
+                                color = EscrowGreen
+                            ) { pendingAction = EscrowAction.RELEASE }
+                        }
 
-                            // Buyer: request refund
-                            isBuyer && (trade.status == TradeStatus.ACTIVE.name || trade.status == TradeStatus.PENDING.name) -> {
-                                EscrowActionBtn(
-                                    label    = "Request Refund",
-                                    icon     = Icons.Default.Undo,
-                                    color    = EscrowAmber,
-                                    outlined = true
-                                ) { pendingAction = EscrowAction.REFUND; showKeyInput = true }
-                            }
+                        // Buyer: request refund
+                        isBuyer && (trade.status == TradeStatus.ACTIVE.name || trade.status == TradeStatus.PENDING.name) -> {
+                            EscrowActionBtn(
+                                label    = "Request Refund",
+                                icon     = Icons.Default.Undo,
+                                color    = EscrowAmber,
+                                outlined = true
+                            ) { pendingAction = EscrowAction.REFUND }
+                        }
 
-                            // Completed or refunded
-                            trade.status == TradeStatus.COMPLETED.name || trade.status == TradeStatus.REFUNDED.name -> {
-                                StatusInfoCard(
-                                    if (trade.status == TradeStatus.COMPLETED.name)
-                                        "✓ Trade completed — funds released to seller."
-                                    else
-                                        "↩ Trade refunded — funds returned to buyer.",
-                                    if (trade.status == TradeStatus.COMPLETED.name) EscrowGreen else EscrowAmber
-                                )
-                            }
+                        // Completed or refunded
+                        trade.status == TradeStatus.COMPLETED.name || trade.status == TradeStatus.REFUNDED.name -> {
+                            StatusInfoCard(
+                                if (trade.status == TradeStatus.COMPLETED.name)
+                                    "✓ Trade completed — funds released to seller."
+                                else
+                                    "↩ Trade refunded — funds returned to buyer.",
+                                if (trade.status == TradeStatus.COMPLETED.name) EscrowGreen else EscrowAmber
+                            )
+                        }
 
-                            // Rejected
-                            trade.status == TradeStatus.REJECTED.name -> {
-                                StatusInfoCard("✕ Trade rejected by seller.", EscrowRed)
-                            }
+                        // Rejected
+                        trade.status == TradeStatus.REJECTED.name -> {
+                            StatusInfoCard("✕ Trade rejected by seller.", EscrowRed)
+                        }
 
-                            // Pending (seller hasn't accepted yet)
-                            trade.status == TradeStatus.PENDING.name -> {
-                                StatusInfoCard("Awaiting seller acceptance…", EscrowAmber)
-                            }
+                        // Pending (seller hasn't accepted yet)
+                        trade.status == TradeStatus.PENDING.name -> {
+                            StatusInfoCard("Awaiting seller acceptance…", EscrowAmber)
                         }
                     }
                 }
@@ -398,20 +349,21 @@ private fun TradeStatusHeader(status: String) {
 }
 
 @Composable
-private fun EscrowStepper(status: String) {
+private fun EscrowStepper(status: String, fundsLocked: Boolean) {
     val steps = listOf(
         Pair("Created",   Icons.Default.Description),
         Pair("Accepted",  Icons.Default.Handshake),
-        Pair("Locked",    Icons.Default.Lock),
+        Pair("Paid",      Icons.Default.Lock),
         Pair("Completed", Icons.Default.CheckCircle)
     )
-    val currentStep = when (status) {
-        TradeStatus.PENDING.name   -> 0
-        TradeStatus.ACTIVE.name    -> 1
-        TradeStatus.COMPLETED.name -> 3
-        TradeStatus.REFUNDED.name  -> 2
-        TradeStatus.REJECTED.name  -> -1
-        else                       -> 0
+    val currentStep = when {
+        status == TradeStatus.PENDING.name   -> 0
+        status == TradeStatus.COMPLETED.name -> 3
+        status == TradeStatus.REFUNDED.name  -> 2
+        status == TradeStatus.REJECTED.name  -> -1
+        status == TradeStatus.ACTIVE.name && fundsLocked -> 2
+        status == TradeStatus.ACTIVE.name    -> 1
+        else                                  -> 0
     }
 
     Card(
@@ -569,16 +521,6 @@ private fun StatusInfoCard(message: String, color: Color) {
         )
     }
 }
-
-@Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor      = EscrowGreen,
-    unfocusedBorderColor    = OnSurfaceDark.copy(0.15f),
-    focusedLabelColor       = EscrowGreen,
-    cursorColor             = EscrowGreen,
-    focusedContainerColor   = BackgroundDark,
-    unfocusedContainerColor = BackgroundDark
-)
 
 enum class EscrowAction { LOCK, RELEASE, REFUND }
 

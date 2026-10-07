@@ -1,6 +1,7 @@
 package com.escrowmalawi.presentation.screens.trade
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +25,8 @@ import com.escrowmalawi.data.model.Trade
 import com.escrowmalawi.data.model.TradeStatus
 import com.escrowmalawi.presentation.screens.auth.EscrowTextField
 import com.escrowmalawi.presentation.theme.*
+import com.escrowmalawi.presentation.viewmodel.ReviewUiState
+import com.escrowmalawi.presentation.viewmodel.ReviewViewModel
 import com.escrowmalawi.presentation.viewmodel.TradeUiState
 import com.escrowmalawi.presentation.viewmodel.TradeViewModel
 
@@ -49,8 +52,8 @@ fun CreateTradeScreen(
     var sellerUid by remember { mutableStateOf(initialSellerUid) }
     var sellerName by remember { mutableStateOf(initialSellerName) }
     var itemDescription by remember { mutableStateOf(initialDescription) }
-    var amountText by remember { 
-        mutableStateOf(if (initialAmount > 0) initialAmount.toString() else "") 
+    var amountText by remember {
+        mutableStateOf(if (initialAmount > 0) initialAmount.toString() else "")
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -344,18 +347,60 @@ fun TradeDetailScreen(
     currentUserUid: String,
     onBack: () -> Unit,
     onGoToEscrow: (String) -> Unit,
-    viewModel: TradeViewModel = hiltViewModel()
+    viewModel: TradeViewModel = hiltViewModel(),
+    reviewViewModel: ReviewViewModel = hiltViewModel()
 ) {
     val buyerTrades by viewModel.buyerTrades.collectAsState()
     val sellerTrades by viewModel.sellerTrades.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
+    val reviewUiState by reviewViewModel.uiState.collectAsState()
 
     val trade = (buyerTrades + sellerTrades).firstOrNull { it.id == tradeId }
     val isBuyer = trade?.buyerUid == currentUserUid
     val isSeller = trade?.sellerUid == currentUserUid
 
+    var showRatingDialog by remember { mutableStateOf(false) }
+    var alreadyReviewed by remember(tradeId) { mutableStateOf<Boolean?>(null) }
+
     LaunchedEffect(uiState) {
         if (uiState is TradeUiState.Success) viewModel.resetState()
+    }
+
+    // Once the trade is COMPLETED, check (one-shot) whether this user already rated it
+    LaunchedEffect(trade?.status, currentUserUid) {
+        if (trade?.status == TradeStatus.COMPLETED.name && currentUserUid.isNotBlank()) {
+            alreadyReviewed = reviewViewModel.hasReviewed(tradeId, currentUserUid)
+        }
+    }
+
+    LaunchedEffect(reviewUiState) {
+        if (reviewUiState is ReviewUiState.Success) {
+            alreadyReviewed = true
+            showRatingDialog = false
+            reviewViewModel.resetState()
+        }
+    }
+
+    if (showRatingDialog && trade != null) {
+        val counterpartUid = if (isBuyer) trade.sellerUid else trade.buyerUid
+        val counterpartName = if (isBuyer) trade.sellerName else trade.buyerName
+        RateTradeDialog(
+            counterpartName = counterpartName,
+            isSubmitting = reviewUiState is ReviewUiState.Loading,
+            errorMessage = (reviewUiState as? ReviewUiState.Error)?.message,
+            onDismiss = {
+                showRatingDialog = false
+                reviewViewModel.resetState()
+            },
+            onSubmit = { rating, comment ->
+                reviewViewModel.submitReview(
+                    tradeId = tradeId,
+                    ratedUid = counterpartUid,
+                    rating = rating,
+                    comment = comment
+                )
+            }
+        )
     }
 
     Scaffold(
@@ -410,44 +455,82 @@ fun TradeDetailScreen(
             }
 
             // Actions
-    when {
-        // Seller: can accept or reject PENDING trade
-        isSeller && trade.status == TradeStatus.PENDING.name -> {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = { viewModel.rejectTrade(trade.id) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EscrowRed)
-                ) { Text("Reject") }
+            when {
+                // Seller: can accept or reject PENDING trade
+                isSeller && trade.status == TradeStatus.PENDING.name -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedButton(
+                            onClick = { viewModel.rejectTrade(trade.id) },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = EscrowRed)
+                        ) { Text("Reject") }
 
-                Button(
-                    onClick = { viewModel.acceptTrade(trade.id) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
-                ) {
-                    if (uiState is TradeUiState.Loading)
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                    else Text("Accept Trade")
+                        Button(
+                            onClick = { viewModel.acceptTrade(trade.id) },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
+                        ) {
+                            if (uiState is TradeUiState.Loading)
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                            else Text("Accept Trade")
+                        }
+                    }
+                }
+
+                // Buyer: lock funds once trade is ACTIVE
+                isBuyer && trade.status == TradeStatus.ACTIVE.name -> {
+                    Button(
+                        onClick = { onGoToEscrow(trade.id) },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
+                    ) {
+                        Icon(Icons.Default.LockOpen, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Lock Funds in Escrow", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                // Either party: rate the trade once it's COMPLETED (once per user per trade)
+                trade.status == TradeStatus.COMPLETED.name && alreadyReviewed == false -> {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = EscrowGreen.copy(0.08f)),
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, EscrowGreen.copy(0.2f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Star, null, tint = EscrowAmber)
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Trade complete", fontWeight = FontWeight.Bold, color = OnSurfaceDark)
+                                Text(
+                                    "How was your experience with ${if (isBuyer) trade.sellerName else trade.buyerName}?",
+                                    fontSize = 12.sp,
+                                    color = OnSurfaceDark.copy(0.7f)
+                                )
+                            }
+                            Button(
+                                onClick = { showRatingDialog = true },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
+                            ) { Text("Rate") }
+                        }
+                    }
+                }
+
+                trade.status == TradeStatus.COMPLETED.name && alreadyReviewed == true -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CheckCircle, null, tint = EscrowGreen, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("You've rated this trade. Thanks for the feedback!", fontSize = 13.sp, color = OnSurfaceDark.copy(0.7f))
+                    }
                 }
             }
-        }
-
-        // Buyer: lock funds once trade is ACTIVE
-        isBuyer && trade.status == TradeStatus.ACTIVE.name -> {
-            Button(
-                onClick = { onGoToEscrow(trade.id) },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
-            ) {
-                Icon(Icons.Default.LockOpen, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Lock Funds in Escrow", fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
         }
     }
 }
@@ -458,4 +541,83 @@ private fun TradeInfoRow(label: String, value: String) {
         Text(label, color = OnSurfaceDark.copy(0.5f), fontSize = 13.sp)
         Text(value, color = OnSurfaceDark, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  RATE & REVIEW DIALOG
+// ════════════════════════════════════════════════════════════════════════
+
+@Composable
+fun RateTradeDialog(
+    counterpartName: String,
+    isSubmitting: Boolean,
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+    onSubmit: (rating: Int, comment: String) -> Unit
+) {
+    var rating by remember { mutableStateOf(5) }
+    var comment by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        containerColor = SurfaceDark,
+        title = {
+            Text(
+                "Rate ${counterpartName.ifBlank { "this trade" }}",
+                fontWeight = FontWeight.Bold,
+                color = OnSurfaceDark
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    "Tap a star to rate your experience.",
+                    fontSize = 13.sp,
+                    color = OnSurfaceDark.copy(0.6f)
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (star in 1..5) {
+                        Icon(
+                            imageVector = if (star <= rating) Icons.Default.Star else Icons.Default.StarBorder,
+                            contentDescription = "$star star",
+                            tint = EscrowAmber,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clickable(enabled = !isSubmitting) { rating = star }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                EscrowTextField(
+                    value = comment,
+                    onValueChange = { comment = it },
+                    label = "Add a comment (optional)",
+                    leadingIcon = Icons.Default.RateReview
+                )
+                errorMessage?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = EscrowRed, fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(rating, comment) },
+                enabled = !isSubmitting,
+                colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
+            ) {
+                if (isSubmitting) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                } else {
+                    Text("Submit")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isSubmitting) {
+                Text("Cancel", color = OnSurfaceDark.copy(0.6f))
+            }
+        }
+    )
 }

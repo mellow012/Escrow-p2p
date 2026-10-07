@@ -6,6 +6,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Source
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -104,16 +105,49 @@ class AuthRepository @Inject constructor(
     suspend fun currentUserProfile(): User? {
         val firebaseUser = auth.currentUser ?: return null
         val profile = getUserProfile(firebaseUser.uid)
-        
+
         return profile ?: User(
-            uid = firebaseUser.uid, 
-            name = firebaseUser.displayName ?: "User", 
-            email = firebaseUser.email ?: "", 
+            uid = firebaseUser.uid,
+            name = firebaseUser.displayName ?: "User",
+            email = firebaseUser.email ?: "",
             phone = ""
         )
     }
 
     fun isLoggedIn(): Boolean = auth.currentUser != null
+
+    /**
+     * Real-time ratings lookup for a set of users, keyed by uid → (avgRating, ratingCount).
+     * Used to show seller trust scores on listing rows (Home, Marketplace) without
+     * fetching each seller's full profile individually.
+     *
+     * Firestore's whereIn caps at 30 values, so uids are chunked and the resulting
+     * flows combined into a single up-to-date map.
+     */
+    fun usersRatingsFlow(uids: List<String>): kotlinx.coroutines.flow.Flow<Map<String, Pair<Double, Int>>> {
+        val distinctUids = uids.distinct().filter { it.isNotBlank() }
+        if (distinctUids.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyMap())
+
+        val chunkFlows = distinctUids.chunked(30).map { chunk ->
+            kotlinx.coroutines.flow.callbackFlow {
+                val listener = firestore.collection("users")
+                    .whereIn(com.google.firebase.firestore.FieldPath.documentId(), chunk)
+                    .addSnapshotListener { snap, err ->
+                        if (err != null) {
+                            android.util.Log.e("AuthRepository", "Ratings listen failed: ${err.message}")
+                            return@addSnapshotListener
+                        }
+                        val map = snap?.documents?.associate { doc ->
+                            doc.id to Pair(doc.getDouble("avgRating") ?: 0.0, (doc.getLong("ratingCount") ?: 0L).toInt())
+                        } ?: emptyMap()
+                        trySend(map)
+                    }
+                awaitClose { listener.remove() }
+            }
+        }
+
+        return kotlinx.coroutines.flow.combine(chunkFlows) { maps -> maps.reduce { acc, m -> acc + m } }
+    }
 
     suspend fun updateProfile(
         uid: String,

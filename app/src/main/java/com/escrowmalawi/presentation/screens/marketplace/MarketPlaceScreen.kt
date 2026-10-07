@@ -53,6 +53,7 @@ fun MarketplaceScreen(
     authViewModel  : AuthViewModel        = hiltViewModel()
 ) {
     val listings     by viewModel.listings.collectAsState()
+    val sellerRatings by viewModel.sellerRatings.collectAsState()
     val searchQuery  by viewModel.searchQuery.collectAsState()
     val selectedCat  by viewModel.selectedCategory.collectAsState()
     val currentUser  by authViewModel.currentUser.collectAsState()
@@ -206,6 +207,7 @@ fun MarketplaceScreen(
                         row.forEach { listing ->
                             ListingCard(
                                 listing = listing,
+                                sellerRating = sellerRatings[listing.sellerUid],
                                 onClick = { onListingClick(listing.id) },
                                 modifier = Modifier.weight(1f)
                             )
@@ -590,7 +592,7 @@ private fun HeroBanner(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ListingCard(listing: Listing, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ListingCard(listing: Listing, sellerRating: Pair<Double, Int>?, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Card(
         onClick = onClick,
         modifier = modifier,
@@ -652,6 +654,12 @@ private fun ListingCard(listing: Listing, onClick: () -> Unit, modifier: Modifie
                 ) {
                     Icon(Icons.Default.VerifiedUser, null, tint = EscrowGreenLight, modifier = Modifier.size(10.dp))
                     Text("Escrow protected", fontSize = 10.sp, color = EscrowGreenLight.copy(0.8f))
+                    val (avg, count) = sellerRating ?: Pair(0.0, 0)
+                    if (count > 0) {
+                        Spacer(Modifier.width(2.dp))
+                        Icon(Icons.Default.Star, null, tint = EscrowAmber, modifier = Modifier.size(10.dp))
+                        Text("%.1f".format(avg), fontSize = 10.sp, color = EscrowAmber, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
