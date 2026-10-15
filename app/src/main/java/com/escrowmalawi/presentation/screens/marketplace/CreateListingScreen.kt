@@ -48,6 +48,7 @@ fun CreateListingScreen(
     var title       by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var priceText   by remember { mutableStateOf("") }
+    var quantityText by remember { mutableStateOf("1") }
     var category    by remember { mutableStateOf(ListingCategory.OTHER) }
     var expanded    by remember { mutableStateOf(false) }
     var imageUris   by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -246,6 +247,15 @@ fun CreateListingScreen(
                     keyboardType = KeyboardType.Decimal
                 )
 
+                FormField(
+                    value = quantityText,
+                    onValueChange = { quantityText = it.filter { c -> c.isDigit() }; errorMsg = null },
+                    label = "Quantity",
+                    icon  = Icons.Default.Inventory,
+                    hint  = "1",
+                    keyboardType = KeyboardType.Number
+                )
+
                 SectionLabel("Category")
 
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
@@ -304,8 +314,13 @@ fun CreateListingScreen(
                 Button(
                     onClick = {
                         val price = priceText.toDoubleOrNull()
+                        val quantity = quantityText.toIntOrNull() ?: 1
                         if (price == null || price <= 0) {
                             errorMsg = "Enter a valid price"
+                            return@Button
+                        }
+                        if (quantity <= 0) {
+                            errorMsg = "Quantity must be at least 1"
                             return@Button
                         }
                         viewModel.createListing(
@@ -313,6 +328,7 @@ fun CreateListingScreen(
                             title       = title,
                             description = description,
                             price       = price,
+                            quantity    = quantity,
                             category    = category,
                             imageUris   = imageUris
                         )

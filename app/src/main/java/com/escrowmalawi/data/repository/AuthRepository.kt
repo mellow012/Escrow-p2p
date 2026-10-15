@@ -5,6 +5,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.Source
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.tasks.await
@@ -105,13 +106,38 @@ class AuthRepository @Inject constructor(
     suspend fun currentUserProfile(): User? {
         val firebaseUser = auth.currentUser ?: return null
         val profile = getUserProfile(firebaseUser.uid)
+        if (profile != null) return profile
 
-        return profile ?: User(
+        // No profile document found. Registration writes it fire-and-forget, so
+        // it can go missing (e.g. app closed or offline right after sign-up).
+        // Rebuild it so other users can trade with this account.
+        val fallback = User(
             uid = firebaseUser.uid,
-            name = firebaseUser.displayName ?: "User",
+            name = firebaseUser.displayName
+                ?: firebaseUser.email?.substringBefore("@")
+                ?: "User",
             email = firebaseUser.email ?: "",
-            phone = ""
+            phone = firebaseUser.phoneNumber ?: ""
         )
+        ensureProfileDocExists(fallback)
+        return fallback
+    }
+
+    /**
+     * Creates the profile document ONLY if the server positively confirms it
+     * doesn't exist. If the check fails (offline etc.) we write nothing, so a
+     * real profile can never be overwritten with fallback data.
+     */
+    private suspend fun ensureProfileDocExists(fallback: User) {
+        try {
+            val ref = firestore.collection("users").document(fallback.uid)
+            val snap = ref.get(Source.SERVER).await()
+            if (!snap.exists()) {
+                ref.set(fallback.copy(createdAt = Timestamp.now())).await()
+            }
+        } catch (_: Exception) {
+            // Couldn't confirm either way: try again next time the profile loads.
+        }
     }
 
     fun isLoggedIn(): Boolean = auth.currentUser != null
@@ -156,13 +182,16 @@ class AuthRepository @Inject constructor(
         profilePictureUrl: String,
         walletAddress: String
     ): Result<Unit> = try {
-        firestore.collection("users").document(uid).update(
+        // set+merge (not update) so it also works if the profile doc is missing
+        firestore.collection("users").document(uid).set(
             mapOf(
+                "uid" to uid,
                 "name" to name,
                 "phone" to phone,
                 "profilePictureUrl" to profilePictureUrl,
                 "walletAddress" to walletAddress
-            )
+            ),
+            SetOptions.merge()
         ).await()
         Result.success(Unit)
     } catch (e: Exception) {

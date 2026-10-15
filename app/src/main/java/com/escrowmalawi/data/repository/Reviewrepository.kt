@@ -1,10 +1,10 @@
 package com.escrowmalawi.data.repository
 
-
 import com.escrowmalawi.data.model.Review
 import com.escrowmalawi.data.model.User
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -82,10 +82,12 @@ class ReviewRepository @Inject constructor(
                     createdAt = Timestamp.now()
                 )
                 txn.set(reviewRef, review)
-                txn.update(userRef, mapOf(
+                // set+merge so rating a user whose profile doc is missing still works
+                txn.set(userRef, mapOf(
+                    "uid" to ratedUid,
                     "avgRating" to newAvg,
                     "ratingCount" to newCount
-                ))
+                ), SetOptions.merge())
             }.await()
 
             Result.success(Unit)

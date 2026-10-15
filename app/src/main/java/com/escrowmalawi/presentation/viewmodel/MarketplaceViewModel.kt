@@ -85,12 +85,14 @@ class MarketplaceViewModel @Inject constructor(
         title      : String,
         description: String,
         price      : Double,
+        quantity   : Int,
         category   : ListingCategory,
         imageUris  : List<Uri>
     ) {
         viewModelScope.launch {
             if (title.isBlank()) { _uiState.value = ListingUiState.Error("Title is required"); return@launch }
             if (price <= 0)      { _uiState.value = ListingUiState.Error("Enter a valid price"); return@launch }
+            if (quantity <= 0)   { _uiState.value = ListingUiState.Error("Quantity must be at least 1"); return@launch }
 
             val profile = authRepository.currentUserProfile()
                 ?: run {
@@ -128,6 +130,7 @@ class MarketplaceViewModel @Inject constructor(
                 title       = title,
                 description = description,
                 price       = price,
+                quantity    = quantity,
                 category    = category,
                 imageUrls   = imageUrls
             )

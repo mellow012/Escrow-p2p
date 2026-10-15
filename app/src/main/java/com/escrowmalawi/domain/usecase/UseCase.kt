@@ -76,7 +76,8 @@ class CreateTradeUseCase @Inject constructor(
         sellerName: String,
         sellerPhone: String,
         itemDescription: String,
-        amount: Double
+        amount: Double,
+        listingId: String? = null
     ): Result<Trade> {
         if (itemDescription.isBlank())
             return Result.failure(IllegalArgumentException("Item description is required"))
@@ -86,8 +87,9 @@ class CreateTradeUseCase @Inject constructor(
         val buyerProfile = authRepository.currentUserProfile()
             ?: return Result.failure(IllegalStateException("Not logged in"))
 
+        // The seller's profile doc may be missing (see AuthRepository.currentUserProfile);
+        // that must not block the trade. Wallet is a legacy field, blank is fine.
         val sellerProfile = authRepository.getUserProfile(sellerUid)
-            ?: return Result.failure(IllegalArgumentException("Seller profile not found"))
 
         return tradeRepository.createTrade(
             buyerUid        = buyerProfile.uid,
@@ -96,9 +98,10 @@ class CreateTradeUseCase @Inject constructor(
             sellerUid       = sellerUid,
             sellerName      = sellerName,
             sellerPhone     = sellerPhone,
-            sellerWallet    = sellerProfile.walletAddress,
+            sellerWallet    = sellerProfile?.walletAddress ?: "",
             itemDescription = itemDescription,
-            amount          = amount
+            amount          = amount,
+            listingId       = listingId
         )
     }
 }

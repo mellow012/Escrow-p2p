@@ -248,24 +248,41 @@ fun ListingDetailScreen(
         },
         bottomBar = {
             if (listing != null && listing.sellerUid != currentUserUid) {
+                val isSoldOut = listing.quantity <= 0 || listing.status == "SOLD"
+                
                 Surface(color = SurfaceDark, shadowElevation = 12.dp) {
                     Button(
+                        enabled = !isSoldOut,
                         onClick = { onBuyNow(listing) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                             .height(56.dp),
                         shape  = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
-                    ) {
-                        Icon(Icons.Default.Lock, null, modifier = Modifier.size(18.dp), tint = Color.White)
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Buy with Escrow  ·  MWK ${"%,.0f".format(listing.price)}",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp,
-                            color = Color.White
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EscrowGreen,
+                            disabledContainerColor = OnSurfaceDark.copy(0.12f)
                         )
+                    ) {
+                        if (isSoldOut) {
+                            Icon(Icons.Default.Block, null, modifier = Modifier.size(18.dp), tint = OnSurfaceDark.copy(0.4f))
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Sold Out",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = OnSurfaceDark.copy(0.4f)
+                            )
+                        } else {
+                            Icon(Icons.Default.Lock, null, modifier = Modifier.size(18.dp), tint = Color.White)
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Buy with Escrow  ·  MWK ${"%,.0f".format(listing.price)}",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -392,7 +409,16 @@ fun ListingDetailScreen(
                 // Description
                 if (listing.description.isNotBlank()) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Description", fontWeight = FontWeight.Bold, color = EscrowGreenLight, fontSize = 13.sp, letterSpacing = 0.5.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Description", fontWeight = FontWeight.Bold, color = EscrowGreenLight, fontSize = 13.sp, letterSpacing = 0.5.sp)
+                            if (listing.quantity > 0) {
+                                Text("${listing.quantity} in stock", color = EscrowGreen, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
                         Text(listing.description, color = OnSurfaceDark.copy(0.75f), lineHeight = 22.sp, fontSize = 14.sp)
                     }
                 }
@@ -639,15 +665,35 @@ private fun ListingCard(listing: Listing, sellerRating: Pair<Double, Int>?, onCl
                 }
             }
             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    listing.title,
-                    fontWeight = FontWeight.SemiBold,
-                    color = OnSurfaceDark,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        listing.title,
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.SemiBold,
+                        color = OnSurfaceDark,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontSize = 13.sp
+                    )
+                    if (listing.quantity <= 0) {
+                        Surface(
+                            color = EscrowRed.copy(0.1f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                "SOLD",
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Black,
+                                color = EscrowRed
+                            )
+                        }
+                    }
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)

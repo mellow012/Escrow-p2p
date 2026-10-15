@@ -38,7 +38,8 @@ class TradeRepository @Inject constructor(
         sellerPhone: String,
         sellerWallet: String,
         itemDescription: String,
-        amount: Double
+        amount: Double,
+        listingId: String? = null
     ): Result<Trade> {
         return try {
             val docId = UUID.randomUUID().toString()
@@ -57,6 +58,7 @@ class TradeRepository @Inject constructor(
                 sellerWalletAddress = sellerWallet,
                 itemDescription = itemDescription,
                 amount = amount,
+                listingId = listingId,
                 status = TradeStatus.PENDING.name,
                 blockchainTradeId = blockchainTradeId,
                 createdAt = Timestamp.now(),
@@ -89,28 +91,51 @@ class TradeRepository @Inject constructor(
     // ── Seller accepts trade → status becomes ACTIVE ─────────────────────
     suspend fun acceptTrade(tradeId: String): Result<Unit> {
         return try {
-            val trade = getTrade(tradeId).getOrNull()
-            
-            firestore.runBatch { batch ->
-                batch.update(tradesCollection.document(tradeId), mapOf(
+            firestore.runTransaction { transaction ->
+                val tradeDoc = tradesCollection.document(tradeId)
+                val tradeSnap = transaction.get(tradeDoc)
+                val trade = tradeSnap.toObject(Trade::class.java) ?: throw Exception("Trade not found")
+                
+                // If it's linked to a listing, check stock
+                if (trade.listingId != null) {
+                    val listingDoc = firestore.collection("listings").document(trade.listingId)
+                    val listingSnap = transaction.get(listingDoc)
+                    
+                    if (listingSnap.exists()) {
+                        val currentQty = listingSnap.getLong("quantity") ?: 0
+                        if (currentQty <= 0) {
+                            throw Exception("Item is sold out and cannot be accepted.")
+                        }
+                        
+                        // Decrement quantity
+                        val newQty = currentQty - 1
+                        transaction.update(listingDoc, "quantity", newQty)
+                        
+                        // Auto-mark as SOLD if qty becomes 0
+                        if (newQty <= 0) {
+                            transaction.update(listingDoc, "status", "SOLD")
+                        }
+                    }
+                }
+
+                transaction.update(tradeDoc, mapOf(
                     "status" to TradeStatus.ACTIVE.name,
                     "updatedAt" to Timestamp.now()
                 ))
 
-                if (trade != null) {
-                    // Notify Buyer
-                    val notifId = UUID.randomUUID().toString()
-                    batch.set(notificationsCollection.document(notifId), mapOf(
-                        "id" to notifId,
-                        "recipientUid" to trade.buyerUid,
-                        "title" to "Trade Accepted",
-                        "message" to "${trade.sellerName} accepted your trade request for ${trade.itemDescription}.",
-                        "type" to NotificationType.TRADE_ACCEPTED.name,
-                        "tradeId" to tradeId,
-                        "isRead" to false,
-                        "createdAt" to Timestamp.now()
-                    ))
-                }
+                // Notify Buyer
+                val notifId = UUID.randomUUID().toString()
+                val notifDoc = notificationsCollection.document(notifId)
+                transaction.set(notifDoc, mapOf(
+                    "id" to notifId,
+                    "recipientUid" to trade.buyerUid,
+                    "title" to "Trade Accepted",
+                    "message" to "${trade.sellerName} accepted your trade request for ${trade.itemDescription}.",
+                    "type" to NotificationType.TRADE_ACCEPTED.name,
+                    "tradeId" to tradeId,
+                    "isRead" to false,
+                    "createdAt" to Timestamp.now()
+                ))
             }.await()
             Result.success(Unit)
         } catch (e: Exception) {

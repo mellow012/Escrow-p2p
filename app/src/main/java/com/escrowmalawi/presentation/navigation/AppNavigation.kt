@@ -40,7 +40,7 @@ object Routes {
     const val HOME           = "home"
     const val MARKETPLACE    = "marketplace"
     const val TRADE_LIST     = "trade_list"
-    const val CREATE_TRADE   = "create_trade?sellerUid={sellerUid}&sellerName={sellerName}&sellerPhone={sellerPhone}&desc={desc}&amount={amount}"
+    const val CREATE_TRADE   = "create_trade?sellerUid={sellerUid}&sellerName={sellerName}&sellerPhone={sellerPhone}&desc={desc}&amount={amount}&listingId={listingId}"
     const val TRADE_DETAIL   = "trade_detail/{tradeId}"
     const val ESCROW         = "escrow/{tradeId}"
     const val CREATE_LISTING = "create_listing"
@@ -58,8 +58,19 @@ object Routes {
         sellerName: String = "",
         sellerPhone: String = "",
         desc: String = "",
-        amount: Double = 0.0
-    ) = "create_trade?sellerUid=$sellerUid&sellerName=$sellerName&sellerPhone=$sellerPhone&desc=$desc&amount=$amount"
+        amount: Double = 0.0,
+        listingId: String? = null
+    ): String {
+        // Values come from user-entered listing text (line breaks, spaces, '&', '#'
+        // etc.), so they must be URL-encoded or the route can't be matched.
+        val e = { s: String -> android.net.Uri.encode(s) }
+        var route = "create_trade?sellerUid=${e(sellerUid)}&sellerName=${e(sellerName)}" +
+                "&sellerPhone=${e(sellerPhone)}&desc=${e(desc)}&amount=$amount"
+        if (listingId != null) {
+            route += "&listingId=${e(listingId)}"
+        }
+        return route
+    }
 }
 
 sealed class BottomNavItem(val route: String, val icon: ImageVector, val label: String) {
@@ -132,10 +143,10 @@ fun AppNavigation(
             // ── Auth ──────────────────────────────────────────────────────────
             composable(Routes.LOGIN) {
                 LoginScreen(
-                    onLoggedIn = { 
-                        navController.navigate(Routes.HOME) { 
-                            popUpTo(Routes.LOGIN) { inclusive = true } 
-                        } 
+                    onLoggedIn = {
+                        navController.navigate(Routes.HOME) {
+                            popUpTo(Routes.LOGIN) { inclusive = true }
+                        }
                     },
                     onNavigateToRegister = { navController.navigate(Routes.REGISTER) }
                 )
@@ -143,10 +154,10 @@ fun AppNavigation(
 
             composable(Routes.REGISTER) {
                 RegisterScreen(
-                    onRegistered = { 
-                        navController.navigate(Routes.COMPLETE_PROFILE) { 
-                            popUpTo(Routes.REGISTER) { inclusive = true } 
-                        } 
+                    onRegistered = {
+                        navController.navigate(Routes.COMPLETE_PROFILE) {
+                            popUpTo(Routes.REGISTER) { inclusive = true }
+                        }
                     },
                     onNavigateToLogin = { navController.popBackStack() }
                 )
@@ -216,7 +227,7 @@ fun AppNavigation(
                 val listingId = backStack.arguments?.getString("listingId") ?: return@composable
                 ListingDetailScreen(
                     listingId = listingId,
-                    currentUserUid = currentUser?.uid ?: "",
+                    currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: currentUser?.uid ?: "",
                     onBack = { navController.popBackStack() },
                     onBuyNow = { listing ->
                         navController.navigate(
@@ -225,7 +236,8 @@ fun AppNavigation(
                                 sellerName = listing.sellerName,
                                 sellerPhone = listing.sellerPhone,
                                 desc = listing.title,
-                                amount = listing.price
+                                amount = listing.price,
+                                listingId = listing.id
                             )
                         )
                     }
@@ -254,7 +266,8 @@ fun AppNavigation(
                     navArgument("sellerName") { defaultValue = "" },
                     navArgument("sellerPhone") { defaultValue = "" },
                     navArgument("desc") { defaultValue = "" },
-                    navArgument("amount") { defaultValue = "0.0" }
+                    navArgument("amount") { defaultValue = "0.0" },
+                    navArgument("listingId") { nullable = true; defaultValue = null }
                 )
             ) { backStack ->
                 CreateTradeScreen(
@@ -263,6 +276,7 @@ fun AppNavigation(
                     initialSellerPhone = backStack.arguments?.getString("sellerPhone") ?: "",
                     initialDescription = backStack.arguments?.getString("desc") ?: "",
                     initialAmount = backStack.arguments?.getString("amount")?.toDoubleOrNull() ?: 0.0,
+                    initialListingId = backStack.arguments?.getString("listingId"),
                     onTradeCreated = { id ->
                         navController.navigate(Routes.tradeDetail(id)) {
                             popUpTo(Routes.CREATE_TRADE) { inclusive = true }
@@ -276,7 +290,7 @@ fun AppNavigation(
                 val tradeId = backStack.arguments?.getString("tradeId") ?: return@composable
                 TradeDetailScreen(
                     tradeId = tradeId,
-                    currentUserUid = currentUser?.uid ?: "",
+                    currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: currentUser?.uid ?: "",
                     onBack = { navController.popBackStack() },
                     onGoToEscrow = { id -> navController.navigate(Routes.escrow(id)) }
                 )
@@ -286,7 +300,7 @@ fun AppNavigation(
                 val tradeId = backStack.arguments?.getString("tradeId") ?: return@composable
                 EscrowScreen(
                     tradeId = tradeId,
-                    currentUserUid = currentUser?.uid ?: "",
+                    currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: currentUser?.uid ?: "",
                     onBack = { navController.popBackStack() }
                 )
             }

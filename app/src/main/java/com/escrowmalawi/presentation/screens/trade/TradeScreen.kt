@@ -44,6 +44,7 @@ fun CreateTradeScreen(
     initialSellerPhone: String = "",
     initialDescription: String = "",
     initialAmount: Double = 0.0,
+    initialListingId: String? = null,
     viewModel: TradeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -52,6 +53,7 @@ fun CreateTradeScreen(
     var sellerUid by remember { mutableStateOf(initialSellerUid) }
     var sellerName by remember { mutableStateOf(initialSellerName) }
     var itemDescription by remember { mutableStateOf(initialDescription) }
+    var listingId by remember { mutableStateOf(initialListingId) }
     var amountText by remember {
         mutableStateOf(if (initialAmount > 0) initialAmount.toString() else "")
     }
@@ -174,7 +176,8 @@ fun CreateTradeScreen(
                             sellerName = sellerName,
                             sellerPhone = sellerPhone,
                             itemDescription = itemDescription,
-                            amount = amount
+                            amount = amount,
+                            listingId = listingId
                         )
                     }
                 },
@@ -264,7 +267,7 @@ fun TradeListScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(trades, key = { it.id }) { trade ->
-                        TradeCard(trade = trade, onClick = { onTradeClick(trade.id) })
+                        TradeCard(trade = trade, onClick = { onTradeClick(trade.id) }, showBuyer = selectedTab == 1)
                     }
                 }
             }
@@ -274,7 +277,7 @@ fun TradeListScreen(
 
 // ── Trade Card ───────────────────────────────────────────────────────────────
 @Composable
-fun TradeCard(trade: Trade, onClick: () -> Unit) {
+fun TradeCard(trade: Trade, onClick: () -> Unit, showBuyer: Boolean = false) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -301,7 +304,8 @@ fun TradeCard(trade: Trade, onClick: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "with ${trade.sellerName.ifBlank { trade.sellerPhone }}",
+                    if (showBuyer) "buyer: ${trade.buyerName.ifBlank { "Unknown" }}"
+                    else "seller: ${trade.sellerName.ifBlank { trade.sellerPhone }}",
                     fontSize = 12.sp,
                     color = OnSurfaceDark.copy(0.5f)
                 )
@@ -448,8 +452,17 @@ fun TradeDetailScreen(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TradeInfoRow(label = "Buyer", value = trade.buyerName)
                     TradeInfoRow(label = "Seller", value = "${trade.sellerName} (${trade.sellerPhone})")
+                    TradeInfoRow(
+                        label = "You are",
+                        value = when {
+                            isBuyer && isSeller -> "Buyer and seller (same account)"
+                            isBuyer -> "The buyer"
+                            isSeller -> "The seller"
+                            else -> "Not a party to this trade (uid mismatch)"
+                        }
+                    )
                     if (trade.txHash.isNotBlank()) {
-                        TradeInfoRow(label = "TX Hash", value = trade.txHash.take(20) + "…")
+                        TradeInfoRow(label = "Payment Ref", value = trade.txHash.take(20) + "…")
                     }
                 }
             }
@@ -479,8 +492,8 @@ fun TradeDetailScreen(
                     }
                 }
 
-                // Buyer: lock funds once trade is ACTIVE
-                isBuyer && trade.status == TradeStatus.ACTIVE.name -> {
+                // Buyer: ACTIVE but not yet paid → lock funds
+                isBuyer && trade.status == TradeStatus.ACTIVE.name && trade.txHash.isBlank() -> {
                     Button(
                         onClick = { onGoToEscrow(trade.id) },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -491,6 +504,30 @@ fun TradeDetailScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("Lock Funds in Escrow", fontWeight = FontWeight.SemiBold)
                     }
+                }
+
+                // Buyer: ACTIVE and paid → confirm receipt (the confirm dialog lives on the escrow screen)
+                isBuyer && trade.status == TradeStatus.ACTIVE.name -> {
+                    Button(
+                        onClick = { onGoToEscrow(trade.id) },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
+                    ) {
+                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Confirm Receipt & Release Funds", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                // Seller: ACTIVE → tell them what's happening instead of showing nothing
+                isSeller && trade.status == TradeStatus.ACTIVE.name -> {
+                    Text(
+                        if (trade.txHash.isBlank()) "Trade accepted — waiting for the buyer to pay into escrow."
+                        else "Payment received and held in escrow. Deliver the item — funds release once the buyer confirms receipt.",
+                        fontSize = 13.sp,
+                        color = OnSurfaceDark.copy(0.7f)
+                    )
                 }
 
                 // Either party: rate the trade once it's COMPLETED (once per user per trade)

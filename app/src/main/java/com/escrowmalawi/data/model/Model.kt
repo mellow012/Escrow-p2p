@@ -36,6 +36,7 @@ data class Trade(
     val sellerPhone: String = "",
     val sellerWalletAddress: String = "", // Added
     val buyerWalletAddress: String = "",  // Added
+    val listingId: String? = null,        // Link to listing for inventory
     val itemDescription: String = "",
     val amount: Double = 0.0,           // Amount in MWK (display); ETH handled on-chain
     val status: String = TradeStatus.PENDING.name,
@@ -99,6 +100,7 @@ data class Listing(
     val title       : String        = "",
     val description : String        = "",
     val price       : Double        = 0.0,         // MWK
+    val quantity    : Int           = 1,           // Stock management
     val category    : String        = ListingCategory.OTHER.name,
     val imageUrls   : List<String>  = emptyList(),  // Multiple images
     val status      : String        = ListingStatus.ACTIVE.name,

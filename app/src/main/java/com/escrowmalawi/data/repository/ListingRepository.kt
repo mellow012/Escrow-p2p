@@ -29,6 +29,7 @@ class ListingRepository @Inject constructor(
         description: String,
         price      : Double,
         category   : ListingCategory,
+        quantity   : Int = 1,
         imageUrls  : List<String> = emptyList()
     ): Result<Listing> = try {
         val id = UUID.randomUUID().toString()
@@ -41,6 +42,7 @@ class ListingRepository @Inject constructor(
             title       = title,
             description = description,
             price       = price,
+            quantity    = quantity,
             category    = category.name,
             imageUrls   = imageUrls,
             status      = ListingStatus.ACTIVE.name,

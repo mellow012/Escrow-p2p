@@ -230,11 +230,11 @@ class TradeViewModel @Inject constructor(
 
     fun createTrade(
         sellerUid: String, sellerName: String, sellerPhone: String,
-        itemDescription: String, amount: Double
+        itemDescription: String, amount: Double, listingId: String? = null
     ) {
         viewModelScope.launch {
             _uiState.value = TradeUiState.Loading
-            val result = createTradeUseCase(sellerUid, sellerName, sellerPhone, itemDescription, amount)
+            val result = createTradeUseCase(sellerUid, sellerName, sellerPhone, itemDescription, amount, listingId)
             _uiState.value = if (result.isSuccess) TradeUiState.Success(result.getOrNull())
             else TradeUiState.Error(result.exceptionOrNull()?.message ?: "Failed to create trade")
         }
