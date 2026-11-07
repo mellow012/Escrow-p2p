@@ -1,5 +1,6 @@
 package com.escrowmalawi.data.repository
 
+import com.escrowmalawi.data.model.ListingStatus
 import com.escrowmalawi.data.model.Trade
 import com.escrowmalawi.data.model.TradeStatus
 import com.escrowmalawi.data.model.NotificationType
@@ -27,6 +28,7 @@ class TradeRepository @Inject constructor(
 ) {
     private val tradesCollection = firestore.collection("trades")
     private val notificationsCollection = firestore.collection("notifications")
+    private val listingsCollection = firestore.collection("listings")
 
     // ── Create a trade (buyer initiates) ─────────────────────────────────
     suspend fun createTrade(
@@ -39,9 +41,23 @@ class TradeRepository @Inject constructor(
         sellerWallet: String,
         itemDescription: String,
         amount: Double,
-        listingId: String? = null
+        listingId: String = ""
     ): Result<Trade> {
         return try {
+            // Soft check so buyers get an immediate "sold out" instead of a dead trade.
+            // The authoritative, race-safe check happens when the seller accepts.
+            if (listingId.isNotBlank()) {
+                val listingSnap = listingsCollection.document(listingId).get().await()
+                if (!listingSnap.exists()) {
+                    return Result.failure(IllegalStateException("This listing is no longer available"))
+                }
+                val stock = (listingSnap.getLong("quantity") ?: 1L).toInt()
+                val status = listingSnap.getString("status") ?: ListingStatus.ACTIVE.name
+                if (status != ListingStatus.ACTIVE.name || stock <= 0) {
+                    return Result.failure(IllegalStateException("Sold out — this item is no longer available"))
+                }
+            }
+
             val docId = UUID.randomUUID().toString()
 
             // Create a deterministic on-chain ID from the Firestore doc ID
@@ -57,8 +73,9 @@ class TradeRepository @Inject constructor(
                 sellerPhone = sellerPhone,
                 sellerWalletAddress = sellerWallet,
                 itemDescription = itemDescription,
-                amount = amount,
                 listingId = listingId,
+                quantity = 1,
+                amount = amount,
                 status = TradeStatus.PENDING.name,
                 blockchainTradeId = blockchainTradeId,
                 createdAt = Timestamp.now(),
@@ -67,7 +84,7 @@ class TradeRepository @Inject constructor(
 
             firestore.runBatch { batch ->
                 batch.set(tradesCollection.document(docId), trade)
-                
+
                 // Notify Seller
                 val notifId = UUID.randomUUID().toString()
                 batch.set(notificationsCollection.document(notifId), mapOf(
@@ -88,45 +105,50 @@ class TradeRepository @Inject constructor(
         }
     }
 
-    // ── Seller accepts trade → status becomes ACTIVE ─────────────────────
+    // ── Seller accepts trade → status becomes ACTIVE (reserves stock) ────
     suspend fun acceptTrade(tradeId: String): Result<Unit> {
         return try {
-            firestore.runTransaction { transaction ->
-                val tradeDoc = tradesCollection.document(tradeId)
-                val tradeSnap = transaction.get(tradeDoc)
-                val trade = tradeSnap.toObject(Trade::class.java) ?: throw Exception("Trade not found")
-                
-                // If it's linked to a listing, check stock
-                if (trade.listingId != null) {
-                    val listingDoc = firestore.collection("listings").document(trade.listingId)
-                    val listingSnap = transaction.get(listingDoc)
-                    
-                    if (listingSnap.exists()) {
-                        val currentQty = listingSnap.getLong("quantity") ?: 0
-                        if (currentQty <= 0) {
-                            throw Exception("Item is sold out and cannot be accepted.")
-                        }
-                        
-                        // Decrement quantity
-                        val newQty = currentQty - 1
-                        transaction.update(listingDoc, "quantity", newQty)
-                        
-                        // Auto-mark as SOLD if qty becomes 0
-                        if (newQty <= 0) {
-                            transaction.update(listingDoc, "status", "SOLD")
-                        }
-                    }
+            firestore.runTransaction { txn ->
+                val tradeRef = tradesCollection.document(tradeId)
+                val trade = txn.get(tradeRef).toObject(Trade::class.java)
+                    ?: throw IllegalStateException("Trade not found")
+
+                // Guards against a double-tap reserving stock twice
+                if (trade.status != TradeStatus.PENDING.name) {
+                    throw IllegalStateException("This trade has already been handled")
                 }
 
-                transaction.update(tradeDoc, mapOf(
+                // All reads must come before any writes in a Firestore transaction
+                val listingRef = trade.listingId.takeIf { it.isNotBlank() }
+                    ?.let { listingsCollection.document(it) }
+                val listingSnap = listingRef?.let { txn.get(it) }
+
+                if (listingRef != null && listingSnap != null && listingSnap.exists()) {
+                    val stock = (listingSnap.getLong("quantity") ?: 1L).toInt()
+                    val needed = trade.quantity.coerceAtLeast(1)
+                    if (stock < needed) {
+                        throw IllegalStateException(
+                            "Sold out — there's not enough stock left to accept this trade"
+                        )
+                    }
+                    val remaining = stock - needed
+                    val updates = mutableMapOf<String, Any>(
+                        "quantity" to remaining,
+                        "updatedAt" to Timestamp.now()
+                    )
+                    if (remaining == 0) updates["status"] = ListingStatus.SOLD.name
+                    txn.update(listingRef, updates)
+                }
+
+                txn.update(tradeRef, mapOf(
                     "status" to TradeStatus.ACTIVE.name,
+                    "acceptedAt" to Timestamp.now(),
                     "updatedAt" to Timestamp.now()
                 ))
 
                 // Notify Buyer
                 val notifId = UUID.randomUUID().toString()
-                val notifDoc = notificationsCollection.document(notifId)
-                transaction.set(notifDoc, mapOf(
+                txn.set(notificationsCollection.document(notifId), mapOf(
                     "id" to notifId,
                     "recipientUid" to trade.buyerUid,
                     "title" to "Trade Accepted",
@@ -136,6 +158,49 @@ class TradeRepository @Inject constructor(
                     "isRead" to false,
                     "createdAt" to Timestamp.now()
                 ))
+                null
+            }.await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ── Seller marks the item delivered → starts the buyer's confirm window ──
+    suspend fun markDelivered(tradeId: String): Result<Unit> {
+        return try {
+            firestore.runTransaction { txn ->
+                val tradeRef = tradesCollection.document(tradeId)
+                val trade = txn.get(tradeRef).toObject(Trade::class.java)
+                    ?: throw IllegalStateException("Trade not found")
+                if (trade.status != TradeStatus.ACTIVE.name) {
+                    throw IllegalStateException("This trade is no longer active")
+                }
+                if (trade.txHash.isBlank()) {
+                    throw IllegalStateException("The buyer hasn't paid yet")
+                }
+                if (trade.deliveredAt != null) {
+                    throw IllegalStateException("Already marked as delivered")
+                }
+
+                txn.update(tradeRef, mapOf(
+                    "deliveredAt" to Timestamp.now(),
+                    "updatedAt" to Timestamp.now()
+                ))
+
+                val notifId = UUID.randomUUID().toString()
+                txn.set(notificationsCollection.document(notifId), mapOf(
+                    "id" to notifId,
+                    "recipientUid" to trade.buyerUid,
+                    "title" to "Item Delivered?",
+                    "message" to "${trade.sellerName} marked ${trade.itemDescription} as delivered. " +
+                            "Confirm receipt, or the funds are released to the seller automatically after the confirm window.",
+                    "type" to NotificationType.TRADE_DELIVERED.name,
+                    "tradeId" to tradeId,
+                    "isRead" to false,
+                    "createdAt" to Timestamp.now()
+                ))
+                null
             }.await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -240,22 +305,43 @@ class TradeRepository @Inject constructor(
         }
     }
 
-    // ── Mark trade refunded ──────────────────────────────────────────────
+    // ── Mark trade refunded (returns any reserved stock to the listing) ──
     suspend fun markRefunded(tradeId: String, txHash: String): Result<Unit> {
         return try {
-            val trade = getTrade(tradeId).getOrNull()
+            firestore.runTransaction { txn ->
+                val tradeRef = tradesCollection.document(tradeId)
+                val trade = txn.get(tradeRef).toObject(Trade::class.java)
 
-            firestore.runBatch { batch ->
-                batch.update(tradesCollection.document(tradeId), mapOf(
+                // Stock is only reserved once a trade is ACTIVE (seller accepted)
+                val listingRef = trade
+                    ?.takeIf { it.status == TradeStatus.ACTIVE.name }
+                    ?.listingId?.takeIf { it.isNotBlank() }
+                    ?.let { listingsCollection.document(it) }
+                val listingSnap = listingRef?.let { txn.get(it) }
+
+                txn.update(tradeRef, mapOf(
                     "status" to TradeStatus.REFUNDED.name,
                     "txHash" to txHash,
                     "updatedAt" to Timestamp.now()
                 ))
 
+                if (trade != null && listingRef != null && listingSnap != null && listingSnap.exists()) {
+                    val stock = (listingSnap.getLong("quantity") ?: 0L).toInt()
+                    val updates = mutableMapOf<String, Any>(
+                        "quantity" to stock + trade.quantity.coerceAtLeast(1),
+                        "updatedAt" to Timestamp.now()
+                    )
+                    // Bring a sold-out listing back to the marketplace (never resurrect REMOVED ones)
+                    if (listingSnap.getString("status") == ListingStatus.SOLD.name) {
+                        updates["status"] = ListingStatus.ACTIVE.name
+                    }
+                    txn.update(listingRef, updates)
+                }
+
                 if (trade != null) {
                     // Notify Seller that buyer was refunded
                     val notifId = UUID.randomUUID().toString()
-                    batch.set(notificationsCollection.document(notifId), mapOf(
+                    txn.set(notificationsCollection.document(notifId), mapOf(
                         "id" to notifId,
                         "recipientUid" to trade.sellerUid,
                         "title" to "Trade Refunded",
@@ -266,6 +352,7 @@ class TradeRepository @Inject constructor(
                         "createdAt" to Timestamp.now()
                     ))
                 }
+                null
             }.await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -289,10 +376,10 @@ class TradeRepository @Inject constructor(
         val listener = tradesCollection
             .whereEqualTo("buyerUid", buyerUid)
             .addSnapshotListener { snap, err ->
-                if (err != null) { 
+                if (err != null) {
                     // Log the error but don't crash the flow
                     android.util.Log.e("TradeRepository", "Firestore Error: ${err.message}")
-                    return@addSnapshotListener 
+                    return@addSnapshotListener
                 }
                 val trades = snap?.toObjects(Trade::class.java) ?: emptyList()
                 // Sort client-side to avoid needing a composite index
@@ -306,9 +393,9 @@ class TradeRepository @Inject constructor(
         val listener = tradesCollection
             .whereEqualTo("sellerUid", sellerUid)
             .addSnapshotListener { snap, err ->
-                if (err != null) { 
+                if (err != null) {
                     android.util.Log.e("TradeRepository", "Firestore Error: ${err.message}")
-                    return@addSnapshotListener 
+                    return@addSnapshotListener
                 }
                 val trades = snap?.toObjects(Trade::class.java) ?: emptyList()
                 trySend(trades.sortedByDescending { it.createdAt?.seconds ?: 0 })

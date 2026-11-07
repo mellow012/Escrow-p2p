@@ -44,7 +44,7 @@ fun CreateTradeScreen(
     initialSellerPhone: String = "",
     initialDescription: String = "",
     initialAmount: Double = 0.0,
-    initialListingId: String? = null,
+    initialListingId: String = "",
     viewModel: TradeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -53,7 +53,6 @@ fun CreateTradeScreen(
     var sellerUid by remember { mutableStateOf(initialSellerUid) }
     var sellerName by remember { mutableStateOf(initialSellerName) }
     var itemDescription by remember { mutableStateOf(initialDescription) }
-    var listingId by remember { mutableStateOf(initialListingId) }
     var amountText by remember {
         mutableStateOf(if (initialAmount > 0) initialAmount.toString() else "")
     }
@@ -177,7 +176,7 @@ fun CreateTradeScreen(
                             sellerPhone = sellerPhone,
                             itemDescription = itemDescription,
                             amount = amount,
-                            listingId = listingId
+                            listingId = initialListingId
                         )
                     }
                 },
@@ -467,6 +466,11 @@ fun TradeDetailScreen(
                 }
             }
 
+            // Show failures from accept/reject (e.g. "Sold out")
+            (uiState as? TradeUiState.Error)?.let { err ->
+                Text(err.message, color = EscrowRed, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+
             // Actions
             when {
                 // Seller: can accept or reject PENDING trade
@@ -508,6 +512,13 @@ fun TradeDetailScreen(
 
                 // Buyer: ACTIVE and paid → confirm receipt (the confirm dialog lives on the escrow screen)
                 isBuyer && trade.status == TradeStatus.ACTIVE.name -> {
+                    if (trade.deliveredAt != null) {
+                        Text(
+                            "The seller marked this as delivered. Confirm receipt now, or the funds are released automatically after the confirm window.",
+                            fontSize = 13.sp,
+                            color = EscrowAmber
+                        )
+                    }
                     Button(
                         onClick = { onGoToEscrow(trade.id) },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -520,11 +531,39 @@ fun TradeDetailScreen(
                     }
                 }
 
-                // Seller: ACTIVE → tell them what's happening instead of showing nothing
+                // Seller: ACTIVE, not paid yet → just wait
+                isSeller && trade.status == TradeStatus.ACTIVE.name && trade.txHash.isBlank() -> {
+                    Text(
+                        "Trade accepted — waiting for the buyer to pay into escrow.",
+                        fontSize = 13.sp,
+                        color = OnSurfaceDark.copy(0.7f)
+                    )
+                }
+
+                // Seller: paid, not yet delivered → mark delivered (starts the buyer's confirm window)
+                isSeller && trade.status == TradeStatus.ACTIVE.name && trade.deliveredAt == null -> {
+                    Text(
+                        "Payment received and held in escrow. Deliver the item, then tap the button below.",
+                        fontSize = 13.sp,
+                        color = OnSurfaceDark.copy(0.7f)
+                    )
+                    Button(
+                        onClick = { viewModel.markDelivered(trade.id) },
+                        enabled = uiState !is TradeUiState.Loading,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = EscrowGreen)
+                    ) {
+                        Icon(Icons.Default.LocalShipping, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Mark as Delivered", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                // Seller: delivered → waiting for the buyer (or the automatic release)
                 isSeller && trade.status == TradeStatus.ACTIVE.name -> {
                     Text(
-                        if (trade.txHash.isBlank()) "Trade accepted — waiting for the buyer to pay into escrow."
-                        else "Payment received and held in escrow. Deliver the item — funds release once the buyer confirms receipt.",
+                        "Marked as delivered. The funds release when the buyer confirms, or automatically after the confirm window.",
                         fontSize = 13.sp,
                         color = OnSurfaceDark.copy(0.7f)
                     )

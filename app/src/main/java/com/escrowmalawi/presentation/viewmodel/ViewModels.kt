@@ -228,9 +228,19 @@ class TradeViewModel @Inject constructor(
         emitAll(tradeRepository.sellerTradesFlow(uid))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** Seller taps "Mark as Delivered" (starts the buyer's confirm window). */
+    fun markDelivered(tradeId: String) {
+        viewModelScope.launch {
+            _uiState.value = TradeUiState.Loading
+            val result = tradeRepository.markDelivered(tradeId)
+            _uiState.value = if (result.isSuccess) TradeUiState.Success(null)
+            else TradeUiState.Error(result.exceptionOrNull()?.message ?: "Couldn't mark as delivered")
+        }
+    }
+
     fun createTrade(
         sellerUid: String, sellerName: String, sellerPhone: String,
-        itemDescription: String, amount: Double, listingId: String? = null
+        itemDescription: String, amount: Double, listingId: String = ""
     ) {
         viewModelScope.launch {
             _uiState.value = TradeUiState.Loading

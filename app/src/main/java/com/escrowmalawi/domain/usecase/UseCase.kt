@@ -101,7 +101,7 @@ class CreateTradeUseCase @Inject constructor(
             sellerWallet    = sellerProfile?.walletAddress ?: "",
             itemDescription = itemDescription,
             amount          = amount,
-            listingId       = listingId
+            listingId       = listingId ?: ""
         )
     }
 }

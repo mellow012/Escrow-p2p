@@ -4,11 +4,9 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.escrowmalawi.data.model.Listing
-import com.escrowmalawi.data.model.ListingCategory
-import com.escrowmalawi.data.repository.AuthRepository
-import com.escrowmalawi.data.repository.ListingRepository
-import com.escrowmalawi.data.repository.StorageRepository
+import com.escrowmalawi.data.model.*
+import com.escrowmalawi.data.repository.*
+import com.escrowmalawi.data.util.withNetworkTimeout
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -26,7 +24,8 @@ sealed class ListingUiState {
 class MarketplaceViewModel @Inject constructor(
     private val listingRepository: ListingRepository,
     private val storageRepository : StorageRepository,
-    private val authRepository    : AuthRepository
+    private val authRepository    : AuthRepository,
+    private val notificationRepository: NotificationRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ListingUiState>(ListingUiState.Idle)
@@ -79,6 +78,7 @@ class MarketplaceViewModel @Inject constructor(
      * 2. Save the listing doc to Firestore with those URLs
      *
      * Firestore stores tiny strings, not raw base64 bytes — no 1MB limit hit.
+     * Network steps are wrapped in timeouts so the UI never hangs forever.
      */
     fun createListing(
         context    : Context,
@@ -94,16 +94,24 @@ class MarketplaceViewModel @Inject constructor(
             if (price <= 0)      { _uiState.value = ListingUiState.Error("Enter a valid price"); return@launch }
             if (quantity <= 0)   { _uiState.value = ListingUiState.Error("Quantity must be at least 1"); return@launch }
 
-            val profile = authRepository.currentUserProfile()
-                ?: run {
-                    android.util.Log.e("MarketplaceVM", "Auth user missing. Current user: ${authRepository.currentFirebaseUser()}")
-                    _uiState.value = ListingUiState.Error("Auth error: No active session found.");
-                    return@launch
-                }
-
             _uiState.value = ListingUiState.Loading
 
-            // 1. Upload images to Cloudinary one by one
+            // 0. Load the seller profile (with timeout)
+            val profile = try {
+                withNetworkTimeout(20_000) { authRepository.currentUserProfile() }
+            } catch (e: Exception) {
+                android.util.Log.e("MarketplaceVM", "Profile load failed", e)
+                _uiState.value = ListingUiState.Error(e.localizedMessage ?: "Network error")
+                return@launch
+            }
+
+            if (profile == null) {
+                android.util.Log.e("MarketplaceVM", "Auth user missing. Current user: ${authRepository.currentFirebaseUser()}")
+                _uiState.value = ListingUiState.Error("Auth error: No active session found.")
+                return@launch
+            }
+
+            // 1. Upload images to Cloudinary one by one (StorageRepository has its own 30s timeout)
             val imageUrls = mutableListOf<String>()
             for ((index, uri) in imageUris.withIndex()) {
                 val percent = ((index.toFloat() / imageUris.size) * 100).toInt()
@@ -120,20 +128,26 @@ class MarketplaceViewModel @Inject constructor(
                 imageUrls.add(result.getOrThrow())
             }
 
-            // 2. Save listing to Firestore
+            // 2. Save listing to Firestore (with timeout)
             android.util.Log.d("MarketplaceVM", "Saving listing with ${imageUrls.size} image URLs")
-            val result = listingRepository.createListing(
-                sellerUid   = profile.uid,
-                sellerName  = profile.name,
-                sellerEmail = profile.email,
-                sellerPhone = profile.phone,
-                title       = title,
-                description = description,
-                price       = price,
-                quantity    = quantity,
-                category    = category,
-                imageUrls   = imageUrls
-            )
+            val result = try {
+                withNetworkTimeout {
+                    listingRepository.createListing(
+                        sellerUid   = profile.uid,
+                        sellerName  = profile.name,
+                        sellerEmail = profile.email,
+                        sellerPhone = profile.phone,
+                        title       = title,
+                        description = description,
+                        price       = price,
+                        quantity    = quantity,
+                        category    = category,
+                        imageUrls   = imageUrls
+                    )
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
 
             _uiState.value = if (result.isSuccess) {
                 ListingUiState.Success
@@ -162,6 +176,66 @@ class MarketplaceViewModel @Inject constructor(
             val result = listingRepository.seedDatabase(user.uid, user.name)
             _uiState.value = if (result.isSuccess) ListingUiState.Success
             else ListingUiState.Error(result.exceptionOrNull()?.message ?: "Seeding failed")
+        }
+    }
+
+    fun sellerListingsFlow(sellerUid: String): Flow<List<Listing>> =
+        listingRepository.myListingsFlow(sellerUid)
+
+    fun sellerRatingFlow(sellerUid: String): Flow<Pair<Double, Int>> =
+        authRepository.userRatingFlow(sellerUid)
+
+    fun listingFlow(listingId: String): Flow<Listing?> =
+        listingRepository.listingFlow(listingId)
+
+    fun askWhenBack(listing: Listing, user: User) {
+        viewModelScope.launch {
+            val enquiry = ListingEnquiry(
+                id = java.util.UUID.randomUUID().toString(),
+                listingId = listing.id,
+                userUid = user.uid,
+                userName = user.name,
+                userEmail = user.email,
+                message = "Interested in ${listing.title} when it's back in stock."
+            )
+            val result = listingRepository.createEnquiry(enquiry)
+            if (result.isSuccess) {
+                notificationRepository.sendNotification(
+                    Notification(
+                        recipientUid = listing.sellerUid,
+                        title = "New Restock Request",
+                        message = "${user.name} is interested in '${listing.title}'. Consider restocking soon!",
+                        type = NotificationType.SYSTEM.name,
+                        listingId = listing.id
+                    )
+                )
+            }
+        }
+    }
+
+    fun hasEnquired(listingId: String, userUid: String): Flow<Boolean> =
+        listingRepository.getEnquiriesForListing(listingId, pendingOnly = true)
+            .map { enquiries -> enquiries.any { it.userUid == userUid } }
+
+    fun restock(listingId: String, quantity: Int) {
+        viewModelScope.launch {
+            listingRepository.updateListingQuantity(listingId, quantity)
+            if (quantity > 0) {
+                // Notify interested buyers
+                listingRepository.getEnquiriesForListing(listingId, pendingOnly = true).first().forEach { enquiry ->
+                    notificationRepository.sendNotification(
+                        Notification(
+                            recipientUid = enquiry.userUid,
+                            title = "Item Back in Stock!",
+                            message = "The item you were interested in is now back in stock with $quantity units.",
+                            type = NotificationType.SYSTEM.name,
+                            listingId = listingId
+                        )
+                    )
+                    // Mark enquiry as responded
+                    listingRepository.updateEnquiryStatus(enquiry.id, "RESPONDED")
+                }
+            }
         }
     }
 }

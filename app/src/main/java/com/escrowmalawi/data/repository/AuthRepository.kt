@@ -1,6 +1,8 @@
 package com.escrowmalawi.data.repository
 
 import com.escrowmalawi.data.model.User
+import com.escrowmalawi.data.util.NETWORK_TIMEOUT_MS
+import com.escrowmalawi.data.util.withNetworkTimeout
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -8,7 +10,12 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.Source
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,11 +32,13 @@ class AuthRepository @Inject constructor(
         password: String
     ): Result<FirebaseUser> {
         return try {
-            val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
+            val result = withNetworkTimeout {
+                auth.createUserWithEmailAndPassword(email.trim(), password).await()
+            }
             val firebaseUser = result.user ?: error("Auth returned null user")
 
             // Send verification email
-            firebaseUser.sendEmailVerification().await()
+            withNetworkTimeout { firebaseUser.sendEmailVerification().await() }
 
             // Fire-and-forget — no .await() so we never block on Firestore confirmation
             firestore.collection("users")
@@ -52,14 +61,15 @@ class AuthRepository @Inject constructor(
 
     // ── Check Verification ──────────────────────────────────────────────
     suspend fun isEmailVerified(): Boolean {
-        auth.currentUser?.reload()?.await()
+        // If reload times out we fall back to the last known state
+        withTimeoutOrNull(NETWORK_TIMEOUT_MS) { auth.currentUser?.reload()?.await() }
         return auth.currentUser?.isEmailVerified ?: false
     }
 
     // ── Resend Verification ─────────────────────────────────────────────
     suspend fun resendVerificationEmail(): Result<Unit> {
         return try {
-            auth.currentUser?.sendEmailVerification()?.await()
+            withNetworkTimeout { auth.currentUser?.sendEmailVerification()?.await() }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -69,7 +79,9 @@ class AuthRepository @Inject constructor(
     // ── Login ────────────────────────────────────────────────────────────
     suspend fun login(email: String, password: String): Result<FirebaseUser> {
         return try {
-            val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
+            val result = withNetworkTimeout {
+                auth.signInWithEmailAndPassword(email.trim(), password).await()
+            }
             Result.success(result.user ?: error("Sign-in returned null user"))
         } catch (e: Exception) {
             Result.failure(e)
@@ -92,9 +104,11 @@ class AuthRepository @Inject constructor(
             } catch (_: Exception) { null }
 
             cached ?: try {
-                firestore.collection("users").document(uid)
-                    .get(Source.SERVER).await()
-                    .toObject(User::class.java)
+                withNetworkTimeout(8_000) {
+                    firestore.collection("users").document(uid)
+                        .get(Source.SERVER).await()
+                        .toObject(User::class.java)
+                }
             } catch (_: Exception) {
                 null
             }
@@ -130,10 +144,12 @@ class AuthRepository @Inject constructor(
      */
     private suspend fun ensureProfileDocExists(fallback: User) {
         try {
-            val ref = firestore.collection("users").document(fallback.uid)
-            val snap = ref.get(Source.SERVER).await()
-            if (!snap.exists()) {
-                ref.set(fallback.copy(createdAt = Timestamp.now())).await()
+            withNetworkTimeout(8_000) {
+                val ref = firestore.collection("users").document(fallback.uid)
+                val snap = ref.get(Source.SERVER).await()
+                if (!snap.exists()) {
+                    ref.set(fallback.copy(createdAt = Timestamp.now())).await()
+                }
             }
         } catch (_: Exception) {
             // Couldn't confirm either way: try again next time the profile loads.
@@ -150,12 +166,12 @@ class AuthRepository @Inject constructor(
      * Firestore's whereIn caps at 30 values, so uids are chunked and the resulting
      * flows combined into a single up-to-date map.
      */
-    fun usersRatingsFlow(uids: List<String>): kotlinx.coroutines.flow.Flow<Map<String, Pair<Double, Int>>> {
+    fun usersRatingsFlow(uids: List<String>): Flow<Map<String, Pair<Double, Int>>> {
         val distinctUids = uids.distinct().filter { it.isNotBlank() }
-        if (distinctUids.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyMap())
+        if (distinctUids.isEmpty()) return flowOf(emptyMap())
 
         val chunkFlows = distinctUids.chunked(30).map { chunk ->
-            kotlinx.coroutines.flow.callbackFlow {
+            callbackFlow {
                 val listener = firestore.collection("users")
                     .whereIn(com.google.firebase.firestore.FieldPath.documentId(), chunk)
                     .addSnapshotListener { snap, err ->
@@ -172,7 +188,7 @@ class AuthRepository @Inject constructor(
             }
         }
 
-        return kotlinx.coroutines.flow.combine(chunkFlows) { maps -> maps.reduce { acc, m -> acc + m } }
+        return combine(chunkFlows) { maps -> maps.reduce { acc, m -> acc + m } }
     }
 
     suspend fun updateProfile(
@@ -183,18 +199,31 @@ class AuthRepository @Inject constructor(
         walletAddress: String
     ): Result<Unit> = try {
         // set+merge (not update) so it also works if the profile doc is missing
-        firestore.collection("users").document(uid).set(
-            mapOf(
-                "uid" to uid,
-                "name" to name,
-                "phone" to phone,
-                "profilePictureUrl" to profilePictureUrl,
-                "walletAddress" to walletAddress
-            ),
-            SetOptions.merge()
-        ).await()
+        withNetworkTimeout {
+            firestore.collection("users").document(uid).set(
+                mapOf(
+                    "uid" to uid,
+                    "name" to name,
+                    "phone" to phone,
+                    "profilePictureUrl" to profilePictureUrl,
+                    "walletAddress" to walletAddress
+                ),
+                SetOptions.merge()
+            ).await()
+        }
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
+    }
+
+    fun userRatingFlow(uid: String): kotlinx.coroutines.flow.Flow<Pair<Double, Int>> = callbackFlow {
+        val listener = firestore.collection("users").document(uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) return@addSnapshotListener
+                val avg = snap?.getDouble("avgRating") ?: 0.0
+                val count = (snap?.getLong("ratingCount") ?: 0L).toInt()
+                trySend(Pair(avg, count))
+            }
+        awaitClose { listener.remove() }
     }
 }

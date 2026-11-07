@@ -28,14 +28,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.escrowmalawi.data.model.Listing
 import com.escrowmalawi.data.model.ListingCategory
+import com.escrowmalawi.data.model.isSoldOut
 import com.escrowmalawi.presentation.theme.*
 import com.escrowmalawi.presentation.viewmodel.AuthViewModel
 import com.escrowmalawi.presentation.viewmodel.MarketplaceViewModel
+import kotlinx.coroutines.flow.flowOf
 
 // ════════════════════════════════════════════════════════════════════════
 //  MARKETPLACE SCREEN
@@ -52,11 +56,11 @@ fun MarketplaceScreen(
     viewModel      : MarketplaceViewModel = hiltViewModel(),
     authViewModel  : AuthViewModel        = hiltViewModel()
 ) {
-    val listings     by viewModel.listings.collectAsState()
-    val sellerRatings by viewModel.sellerRatings.collectAsState()
-    val searchQuery  by viewModel.searchQuery.collectAsState()
-    val selectedCat  by viewModel.selectedCategory.collectAsState()
-    val currentUser  by authViewModel.currentUser.collectAsState()
+    val listings     by viewModel.listings.collectAsStateWithLifecycle(initialValue = emptyList())
+    val sellerRatings by viewModel.sellerRatings.collectAsStateWithLifecycle(initialValue = emptyMap())
+    val searchQuery  by viewModel.searchQuery.collectAsStateWithLifecycle(initialValue = "")
+    val selectedCat  by viewModel.selectedCategory.collectAsStateWithLifecycle(initialValue = null)
+    val currentUser  by authViewModel.currentUser.collectAsStateWithLifecycle(initialValue = null)
     var showMenu     by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -107,7 +111,7 @@ fun MarketplaceScreen(
                             HorizontalDivider(color = OnSurfaceDark.copy(0.08f))
                             DropdownMenuItem(
                                 text = { Text("Log out", color = EscrowRed) },
-                                leadingIcon = { Icon(Icons.Default.ExitToApp, null, tint = EscrowRed) },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, null, tint = EscrowRed) },
                                 onClick = { showMenu = false; onLogout() }
                             )
                         }
@@ -232,10 +236,14 @@ fun ListingDetailScreen(
     currentUserUid: String,
     onBack        : () -> Unit,
     onBuyNow      : (Listing) -> Unit,
-    viewModel     : MarketplaceViewModel = hiltViewModel()
+    onSellerClick : (String) -> Unit = {},
+    viewModel     : MarketplaceViewModel = hiltViewModel(),
+    authViewModel  : AuthViewModel        = hiltViewModel()
 ) {
-    val allListings by viewModel.listings.collectAsState()
-    val listing = allListings.firstOrNull { it.id == listingId }
+    val listingFlowValue by viewModel.listingFlow(listingId).collectAsStateWithLifecycle(initialValue = null)
+    val listing = listingFlowValue
+    val sellerRating by (listing?.sellerUid?.let { viewModel.sellerRatingFlow(it) } ?: flowOf(Pair(0.0, 0)))
+        .collectAsStateWithLifecycle(initialValue = Pair(0.0, 0))
     var selectedImageIndex by remember { mutableIntStateOf(0) }
 
     Scaffold(
@@ -248,41 +256,80 @@ fun ListingDetailScreen(
         },
         bottomBar = {
             if (listing != null && listing.sellerUid != currentUserUid) {
-                val isSoldOut = listing.quantity <= 0 || listing.status == "SOLD"
+                val isSoldOut = listing.isSoldOut()
                 
-                Surface(color = SurfaceDark, shadowElevation = 12.dp) {
+                if (isSoldOut) {
+                    val currentUser by authViewModel.currentUser.collectAsStateWithLifecycle(initialValue = null)
+                    val notified by viewModel.hasEnquired(listingId, currentUserUid)
+                        .collectAsStateWithLifecycle(initialValue = false)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Surface(
+                            color = EscrowRed.copy(0.1f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                "SOLD OUT",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black,
+                                color = EscrowRed
+                            )
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Button(
+                            onClick = {
+                                currentUser?.let { user ->
+                                    viewModel.askWhenBack(listing, user)
+                                }
+                            },
+                            enabled = !notified,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = EscrowGreen.copy(0.1f),
+                                contentColor = EscrowGreen,
+                                disabledContainerColor = EscrowGreen.copy(0.05f),
+                                disabledContentColor = EscrowGreen.copy(0.4f)
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(
+                                if (notified) Icons.Default.CheckCircle else Icons.Default.Notifications,
+                                null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (notified) "Notification Set" else "Notify Me", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
                     Button(
-                        enabled = !isSoldOut,
                         onClick = { onBuyNow(listing) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                             .height(56.dp),
-                        shape  = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = EscrowGreen,
                             disabledContainerColor = OnSurfaceDark.copy(0.12f)
                         )
                     ) {
-                        if (isSoldOut) {
-                            Icon(Icons.Default.Block, null, modifier = Modifier.size(18.dp), tint = OnSurfaceDark.copy(0.4f))
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "Sold Out",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = OnSurfaceDark.copy(0.4f)
-                            )
-                        } else {
-                            Icon(Icons.Default.Lock, null, modifier = Modifier.size(18.dp), tint = Color.White)
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "Buy with Escrow  ·  MWK ${"%,.0f".format(listing.price)}",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = Color.White
-                            )
-                        }
+                        Icon(Icons.Default.Lock, null, modifier = Modifier.size(18.dp), tint = Color.White)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "Buy with Escrow  ·  MWK ${"%,.0f".format(listing.price)}",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.sp,
+                            color = Color.White
+                        )
                     }
                 }
             }
@@ -425,6 +472,7 @@ fun ListingDetailScreen(
 
                 // Seller card
                 Card(
+                    onClick = { onSellerClick(listing.sellerUid) },
                     colors = CardDefaults.cardColors(containerColor = SurfaceDark),
                     shape  = RoundedCornerShape(16.dp)
                 ) {
@@ -448,11 +496,16 @@ fun ListingDetailScreen(
                         Column(Modifier.weight(1f)) {
                             Text("Sold by", fontSize = 11.sp, color = OnSurfaceDark.copy(0.4f))
                             Text(listing.sellerName, fontWeight = FontWeight.SemiBold, color = OnSurfaceDark)
-                            if (listing.sellerEmail.isNotBlank()) {
-                                Text(listing.sellerEmail, fontSize = 12.sp, color = OnSurfaceDark.copy(0.45f))
+                            if (sellerRating.second > 0) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(Icons.Default.Star, null, tint = EscrowAmber, modifier = Modifier.size(12.dp))
+                                    Text("%.1f".format(sellerRating.first), fontSize = 12.sp, color = EscrowAmber, fontWeight = FontWeight.Bold)
+                                    Text("(${sellerRating.second} reviews)", fontSize = 11.sp, color = OnSurfaceDark.copy(0.5f))
+                                }
                             }
+                            Text("View catalog", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = EscrowGreen)
                         }
-                        Icon(Icons.Default.ChevronRight, null, tint = OnSurfaceDark.copy(0.2f))
+                        Icon(Icons.Default.ChevronRight, null, tint = EscrowGreen)
                     }
                 }
 
@@ -490,7 +543,7 @@ fun MyListingsScreen(
     onListingClick: (String) -> Unit,
     viewModel     : MarketplaceViewModel = hiltViewModel()
 ) {
-    val myListings by viewModel.myListings.collectAsState()
+    val myListings by viewModel.myListings.collectAsStateWithLifecycle(initialValue = emptyList())
 
     Scaffold(
         topBar = {

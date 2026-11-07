@@ -49,10 +49,12 @@ object Routes {
     const val PROFILE        = "profile"
     const val VERIFY_IDENTITY = "verify_identity"
     const val NOTIFICATIONS  = "notifications"
+    const val CATALOG        = "catalog/{sellerUid}"
 
     fun tradeDetail(id: String)   = "trade_detail/$id"
     fun escrow(id: String)        = "escrow/$id"
     fun listingDetail(id: String) = "listing_detail/$id"
+    fun catalog(sellerUid: String) = "catalog/${android.net.Uri.encode(sellerUid)}"
     fun createTrade(
         sellerUid: String = "",
         sellerName: String = "",
@@ -229,6 +231,7 @@ fun AppNavigation(
                     listingId = listingId,
                     currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: currentUser?.uid ?: "",
                     onBack = { navController.popBackStack() },
+                    onSellerClick = { uid -> navController.navigate(Routes.catalog(uid)) },
                     onBuyNow = { listing ->
                         navController.navigate(
                             Routes.createTrade(
@@ -276,7 +279,7 @@ fun AppNavigation(
                     initialSellerPhone = backStack.arguments?.getString("sellerPhone") ?: "",
                     initialDescription = backStack.arguments?.getString("desc") ?: "",
                     initialAmount = backStack.arguments?.getString("amount")?.toDoubleOrNull() ?: 0.0,
-                    initialListingId = backStack.arguments?.getString("listingId"),
+                    initialListingId = backStack.arguments?.getString("listingId") ?: "",
                     onTradeCreated = { id ->
                         navController.navigate(Routes.tradeDetail(id)) {
                             popUpTo(Routes.CREATE_TRADE) { inclusive = true }
@@ -314,7 +317,9 @@ fun AppNavigation(
                             popUpTo(0) { inclusive = true }
                         }
                     },
-                    onVerifyClick = { navController.navigate(Routes.VERIFY_IDENTITY) }
+                    onVerifyClick = { navController.navigate(Routes.VERIFY_IDENTITY) },
+                    onViewCatalog = { uid -> navController.navigate(Routes.catalog(uid)) },
+                    onManageListings = { navController.navigate(Routes.MY_LISTINGS) }
                 )
             }
 
@@ -337,6 +342,20 @@ fun AppNavigation(
                     onNavigateToEscrow = { tradeId ->
                         navController.navigate(Routes.escrow(tradeId))
                     }
+                )
+            }
+
+            composable(
+                route = Routes.CATALOG,
+                arguments = listOf(navArgument("sellerUid") { type = NavType.StringType })
+            ) { backStack ->
+                val sellerUid = backStack.arguments?.getString("sellerUid") ?: ""
+                SellerCatalogScreen(
+                    sellerUid = sellerUid,
+                    currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "",
+                    onBack = { navController.popBackStack() },
+                    onListingClick = { id -> navController.navigate(Routes.listingDetail(id)) },
+                    onAddProduct = { navController.navigate(Routes.CREATE_LISTING) }
                 )
             }
         }

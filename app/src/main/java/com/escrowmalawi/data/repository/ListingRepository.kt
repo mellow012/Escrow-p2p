@@ -1,8 +1,6 @@
 package com.escrowmalawi.data.repository
 
-import com.escrowmalawi.data.model.Listing
-import com.escrowmalawi.data.model.ListingCategory
-import com.escrowmalawi.data.model.ListingStatus
+import com.escrowmalawi.data.model.*
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -107,6 +105,14 @@ class ListingRepository @Inject constructor(
         if (listing != null) Result.success(listing) else Result.failure(Exception("Listing not found"))
     } catch (e: Exception) { Result.failure(e) }
 
+    fun listingFlow(listingId: String): Flow<Listing?> = callbackFlow {
+        val listener = col.document(listingId).addSnapshotListener { snap, err ->
+            if (err != null) return@addSnapshotListener
+            trySend(snap?.toObject(Listing::class.java))
+        }
+        awaitClose { listener.remove() }
+    }
+
     suspend fun markSold(listingId: String): Result<Unit> = try {
         col.document(listingId).update(
             mapOf("status" to ListingStatus.SOLD.name, "updatedAt" to Timestamp.now())
@@ -117,6 +123,45 @@ class ListingRepository @Inject constructor(
     suspend fun removeListing(listingId: String): Result<Unit> = try {
         col.document(listingId).update(
             mapOf("status" to ListingStatus.REMOVED.name, "updatedAt" to Timestamp.now())
+        ).await()
+        Result.success(Unit)
+    } catch (e: Exception) { Result.failure(e) }
+
+    suspend fun createEnquiry(enquiry: ListingEnquiry): Result<Unit> = try {
+        firestore.collection("listing_enquiries").document(enquiry.id).set(enquiry).await()
+        Result.success(Unit)
+    } catch (e: Exception) { Result.failure(e) }
+
+    fun getEnquiriesForListing(listingId: String, pendingOnly: Boolean = true): Flow<List<ListingEnquiry>> = callbackFlow {
+        var query = firestore.collection("listing_enquiries")
+            .whereEqualTo("listingId", listingId)
+        
+        if (pendingOnly) {
+            query = query.whereEqualTo("status", "PENDING")
+        }
+
+        val listener = query.addSnapshotListener { snap, err ->
+            if (err != null) return@addSnapshotListener
+            val items = snap?.toObjects(ListingEnquiry::class.java) ?: emptyList()
+            trySend(items.sortedByDescending { it.createdAt?.seconds ?: 0 })
+        }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun updateEnquiryStatus(enquiryId: String, status: String): Result<Unit> = try {
+        firestore.collection("listing_enquiries").document(enquiryId)
+            .update("status", status).await()
+        Result.success(Unit)
+    } catch (e: Exception) { Result.failure(e) }
+
+    suspend fun updateListingQuantity(listingId: String, newQuantity: Int): Result<Unit> = try {
+        val status = if (newQuantity > 0) ListingStatus.ACTIVE.name else ListingStatus.SOLD.name
+        col.document(listingId).update(
+            mapOf(
+                "quantity" to newQuantity,
+                "status" to status,
+                "updatedAt" to Timestamp.now()
+            )
         ).await()
         Result.success(Unit)
     } catch (e: Exception) { Result.failure(e) }

@@ -36,14 +36,19 @@ data class Trade(
     val sellerPhone: String = "",
     val sellerWalletAddress: String = "", // Added
     val buyerWalletAddress: String = "",  // Added
-    val listingId: String? = null,        // Link to listing for inventory
     val itemDescription: String = "",
+    val listingId: String = "",         // Listing this trade is for (blank for legacy/manual trades)
+    val quantity: Int = 1,              // Units reserved from the listing's stock
     val amount: Double = 0.0,           // Amount in MWK (display); ETH handled on-chain
     val status: String = TradeStatus.PENDING.name,
     val blockchainTradeId: String = "", // keccak256 hash used on-chain
     val txHash: String = "",            // Ethereum transaction hash when funds locked
     val createdAt: Timestamp = Timestamp.now(),
-    val updatedAt: Timestamp = Timestamp.now()
+    val updatedAt: Timestamp = Timestamp.now(),
+    // Timestamps that drive the escrow automation rules (null until that step happens)
+    val acceptedAt: Timestamp? = null,  // seller accepted
+    val paidAt: Timestamp? = null,      // payment confirmed (set by the backend)
+    val deliveredAt: Timestamp? = null  // seller marked the item delivered
 )
 
 // ── EscrowState ──────────────────────────────────────────────────────────────
@@ -63,6 +68,7 @@ enum class NotificationType {
     TRADE_COMPLETED,
     TRADE_REFUNDED,
     TRADE_REJECTED,
+    TRADE_DELIVERED,
     SYSTEM
 }
 
@@ -73,6 +79,7 @@ data class Notification(
     val message: String = "",
     val type: String = NotificationType.SYSTEM.name,
     val tradeId: String? = null,
+    val listingId: String? = null,
     val isRead: Boolean = false,
     val createdAt: Timestamp = Timestamp.now()
 )
@@ -99,8 +106,8 @@ data class Listing(
     val sellerPhone : String        = "",
     val title       : String        = "",
     val description : String        = "",
-    val price       : Double        = 0.0,         // MWK
-    val quantity    : Int           = 1,           // Stock management
+    val price       : Double        = 0.0,         // MWK, per unit
+    val quantity    : Int           = 1,           // Units in stock (older listings default to 1)
     val category    : String        = ListingCategory.OTHER.name,
     val imageUrls   : List<String>  = emptyList(),  // Multiple images
     val status      : String        = ListingStatus.ACTIVE.name,
@@ -119,3 +126,19 @@ data class Review(
     val comment: String = "",
     val createdAt: Timestamp = Timestamp.now()
 )
+
+// ── ListingEnquiry ────────────────────────────────────────────────────────────
+data class ListingEnquiry(
+    val id: String = "",
+    val listingId: String = "",
+    val userUid: String = "",
+    val userName: String = "",
+    val userEmail: String = "",
+    val userPhone: String = "",
+    val message: String = "",
+    val status: String = "PENDING", // PENDING, NOTIFIED, COMPLETED
+    val createdAt: Timestamp = Timestamp.now()
+)
+
+/** True when a listing can't be bought any more (out of stock or not active). */
+fun Listing.isSoldOut(): Boolean = status != ListingStatus.ACTIVE.name || quantity <= 0

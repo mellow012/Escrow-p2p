@@ -43,6 +43,8 @@ fun ProfileScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit,
     onVerifyClick: () -> Unit = {},
+    onViewCatalog: (String) -> Unit = {},
+    onManageListings: () -> Unit = {},
     authViewModel: AuthViewModel = hiltViewModel(),
     tradeViewModel: TradeViewModel = hiltViewModel()
 ) {
@@ -236,6 +238,33 @@ fun ProfileScreen(
                     SettingsItem(Icons.Default.Shield, "Privacy & Security") {}
                     SettingsItem(Icons.Default.Notifications, "Notification Settings") {}
                     SettingsItem(Icons.AutoMirrored.Filled.Help, "Help & Support") {}
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Selling Card ─────────────────────────────────────────────
+            Text(
+                "Selling",
+                modifier = Modifier.fillMaxWidth(),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                color = EscrowGreenLight
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    SettingsItem(Icons.Default.Storefront, "Public Catalog") {
+                        currentUser?.uid?.let { onViewCatalog(it) }
+                    }
+                    SettingsItem(Icons.Default.Inventory, "Manage My Listings") {
+                        onManageListings()
+                    }
                 }
             }
 
