@@ -29,6 +29,10 @@ import com.escrowmalawi.presentation.viewmodel.ReviewUiState
 import com.escrowmalawi.presentation.viewmodel.ReviewViewModel
 import com.escrowmalawi.presentation.viewmodel.TradeUiState
 import com.escrowmalawi.presentation.viewmodel.TradeViewModel
+import androidx.compose.ui.platform.LocalUriHandler
+import com.google.firebase.Timestamp
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 // ════════════════════════════════════════════════════════════════════════
 //  CREATE TRADE SCREEN  (Buyer initiates trade)
@@ -466,6 +470,10 @@ fun TradeDetailScreen(
                 }
             }
 
+            // Progress timeline (requested → accepted → paid → delivered → completed)
+            TradeTimeline(trade)
+            OnChainProof(trade)
+
             // Show failures from accept/reject (e.g. "Sold out")
             (uiState as? TradeUiState.Error)?.let { err ->
                 Text(err.message, color = EscrowRed, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -696,4 +704,119 @@ fun RateTradeDialog(
             }
         }
     )
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  PROGRESS TIMELINE
+// ════════════════════════════════════════════════════════════════════════
+
+private data class TimelineStep(
+    val label: String,
+    val done: Boolean,
+    val time: Timestamp?,
+    val bad: Boolean = false
+)
+
+@Composable
+private fun TradeTimeline(trade: Trade) {
+    val s = trade.status
+    val accepted = trade.acceptedAt != null ||
+            s == TradeStatus.ACTIVE.name || s == TradeStatus.COMPLETED.name || s == TradeStatus.REFUNDED.name
+    val paid = trade.paidAt != null || trade.txHash.isNotBlank()
+    val delivered = trade.deliveredAt != null || s == TradeStatus.COMPLETED.name
+    val completed = s == TradeStatus.COMPLETED.name
+
+    val steps = buildList {
+        add(TimelineStep("Requested", true, trade.createdAt))
+        if (s == TradeStatus.REJECTED.name) {
+            add(TimelineStep("Rejected", true, trade.updatedAt, bad = true))
+        } else {
+            add(TimelineStep("Accepted", accepted, trade.acceptedAt))
+            add(TimelineStep("Paid into escrow", paid, trade.paidAt))
+            add(TimelineStep("Delivered", delivered, trade.deliveredAt))
+            if (s == TradeStatus.REFUNDED.name) {
+                add(TimelineStep("Refunded", true, trade.updatedAt, bad = true))
+            } else {
+                add(TimelineStep("Completed", completed, if (completed) trade.updatedAt else null))
+            }
+        }
+    }
+
+    val fmt = remember { SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()) }
+
+    Card(colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Progress", color = OnSurfaceDark.copy(0.5f), fontSize = 12.sp)
+            steps.forEach { step ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (step.done) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        null,
+                        tint = when {
+                            !step.done -> OnSurfaceDark.copy(0.25f)
+                            step.bad -> EscrowRed
+                            else -> EscrowGreen
+                        },
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        step.label,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (step.done) OnSurfaceDark else OnSurfaceDark.copy(0.4f),
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (step.done) {
+                        step.time?.let {
+                            Text(fmt.format(it.toDate()), fontSize = 11.sp, color = OnSurfaceDark.copy(0.5f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  ON-CHAIN PROOF  (latest P2PEscrow transaction for this trade)
+// ════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun OnChainProof(trade: Trade) {
+    if (trade.chainTxHash.isBlank() && trade.chainError.isBlank()) return
+    val uriHandler = LocalUriHandler.current
+
+    Card(colors = CardDefaults.cardColors(containerColor = SurfaceDark), shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Link, null, tint = EscrowGreen, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("On-chain record", fontWeight = FontWeight.SemiBold, color = OnSurfaceDark, fontSize = 14.sp)
+            }
+            if (trade.chainTxHash.isNotBlank()) {
+                Text(
+                    "Latest step: ${trade.chainTxHash.take(10)}…${trade.chainTxHash.takeLast(8)}",
+                    fontSize = 12.sp,
+                    color = OnSurfaceDark.copy(0.7f)
+                )
+                Text(
+                    "View on Etherscan",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = EscrowGreenLight,
+                    modifier = Modifier.clickable {
+                        uriHandler.openUri("https://sepolia.etherscan.io/tx/${trade.chainTxHash}")
+                    }
+                )
+            }
+            if (trade.chainError.isNotBlank()) {
+                Text(
+                    "Not recorded on-chain: ${trade.chainError}",
+                    fontSize = 11.sp,
+                    color = EscrowAmber
+                )
+            }
+        }
+    }
 }

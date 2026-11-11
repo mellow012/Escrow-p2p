@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -6,6 +8,12 @@ plugins {
     id("com.google.devtools.ksp")
 
 
+}
+
+// Secrets that must not be committed live in local.properties (git-ignored).
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -21,6 +29,15 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        // Sepolia RPC endpoint, e.g. RPC_URL=https://eth-sepolia.g.alchemy.com/v2/<key>
+        buildConfigField("String", "RPC_URL", "\"${localProps.getProperty("RPC_URL", "")}\"")
+        // Demo mode: shared test accounts that sign for every user. Leave blank in
+        // local.properties to use each user's own wallet instead. TEST KEYS ONLY.
+        buildConfigField("String", "DEMO_BUYER_KEY", "\"${localProps.getProperty("DEMO_BUYER_KEY", "")}\"")
+        buildConfigField("String", "DEMO_SELLER_KEY", "\"${localProps.getProperty("DEMO_SELLER_KEY", "")}\"")
+        // Deployed P2PEscrow contract (Sepolia)
+        buildConfigField("String", "ESCROW_CONTRACT", "\"0x1e0bb30abc2a905c451831c8e3a1f9c537f93eea\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

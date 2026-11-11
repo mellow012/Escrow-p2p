@@ -34,6 +34,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.escrowmalawi.presentation.theme.*
 import com.escrowmalawi.presentation.viewmodel.AuthViewModel
 import com.escrowmalawi.presentation.viewmodel.TradeViewModel
+import com.escrowmalawi.presentation.viewmodel.WalletViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -46,9 +47,14 @@ fun ProfileScreen(
     onViewCatalog: (String) -> Unit = {},
     onManageListings: () -> Unit = {},
     authViewModel: AuthViewModel = hiltViewModel(),
-    tradeViewModel: TradeViewModel = hiltViewModel()
+    tradeViewModel: TradeViewModel = hiltViewModel(),
+    walletViewModel: WalletViewModel = hiltViewModel()
 ) {
     val currentUser by authViewModel.currentUser.collectAsState()
+    val walletBalance by walletViewModel.balance.collectAsState()
+    LaunchedEffect(currentUser?.walletAddress) {
+        walletViewModel.refresh(currentUser?.walletAddress ?: "")
+    }
     val buyerTrades by tradeViewModel.buyerTrades.collectAsState()
     val sellerTrades by tradeViewModel.sellerTrades.collectAsState()
     val clipboardManager = LocalClipboardManager.current
@@ -214,6 +220,8 @@ fun ProfileScreen(
                             Toast.makeText(context, "Address copied!", Toast.LENGTH_SHORT).show()
                         }
                     )
+                    HorizontalDivider(color = OnSurfaceDark.copy(0.05f), modifier = Modifier.padding(vertical = 12.dp))
+                    ProfileInfoRow(Icons.Default.LocalGasStation, "Gas balance (Sepolia)", walletBalance)
                 }
             }
 

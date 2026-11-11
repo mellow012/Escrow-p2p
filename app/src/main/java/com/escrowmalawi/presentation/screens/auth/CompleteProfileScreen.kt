@@ -36,7 +36,7 @@ fun CompleteProfileScreen(
 ) {
     val context = LocalContext.current
     val user by viewModel.currentUser.collectAsState()
-    
+
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var profileUri by remember { mutableStateOf<Uri?>(null) }
@@ -110,7 +110,7 @@ fun CompleteProfileScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("P2P Wallet", fontWeight = FontWeight.Bold)
                 }
-                
+
                 if (!walletCreated) {
                     Text("You need a blockchain wallet to lock/receive funds.", fontSize = 12.sp, color = OnSurfaceDark.copy(0.6f))
                     Button(
@@ -127,7 +127,12 @@ fun CompleteProfileScreen(
                     }
                 } else {
                     Spacer(Modifier.height(8.dp))
-                    Text("Address: ${generatedAddress.take(10)}...${generatedAddress.takeLast(10)}", fontSize = 11.sp, color = EscrowGreen)
+                    Text("Address: $generatedAddress", fontSize = 11.sp, color = EscrowGreen)
+                    Text(
+                        "Your wallet pays a tiny gas fee for each trade step. Send it a little Sepolia test ETH.",
+                        fontSize = 11.sp,
+                        color = OnSurfaceDark.copy(0.5f)
+                    )
                     Text("✔ Wallet generated successfully", fontSize = 11.sp, color = OnSurfaceDark.copy(0.5f))
                 }
             }

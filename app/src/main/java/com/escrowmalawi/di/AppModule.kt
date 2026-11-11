@@ -1,5 +1,6 @@
 package com.escrowmalawi.di
 
+import com.escrowmalawi.BuildConfig
 import com.escrowmalawi.data.local.WalletManager
 import com.google.firebase.firestore.FirebaseFirestore
 import dagger.Module
@@ -45,4 +46,20 @@ object AppModule {
     @Provides @Named("paychanguBackendUrl")
     fun providePaychanguBackendUrl(): String =
         "https://paychangu-backend-mobile.vercel.app"  // ← replace
+
+    // ── Blockchain (P2PEscrow on Sepolia) ─────────────────────────────────
+    // RPC_URL comes from local.properties (not committed). The contract address
+    // is public and set in app/build.gradle.kts.
+    @Provides @Named("rpcUrl")
+    fun provideRpcUrl(): String = BuildConfig.RPC_URL
+
+    @Provides @Named("contractAddress")
+    fun provideContractAddress(): String = BuildConfig.ESCROW_CONTRACT
+
+    // Demo mode: shared Buyer/Seller test accounts (blank = per-user wallets).
+    @Provides @Named("demoBuyerKey")
+    fun provideDemoBuyerKey(): String = BuildConfig.DEMO_BUYER_KEY
+
+    @Provides @Named("demoSellerKey")
+    fun provideDemoSellerKey(): String = BuildConfig.DEMO_SELLER_KEY
 }

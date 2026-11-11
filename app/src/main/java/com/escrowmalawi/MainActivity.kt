@@ -1,5 +1,6 @@
 package com.escrowmalawi
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,38 +14,46 @@ import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private lateinit var navController: NavHostController
+    private var navController: NavHostController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            navController = rememberNavController()
+            val nav = rememberNavController()
+            navController = nav
             EscrowMalawiTheme {
-                AppNavigation(navController = navController)
+                AppNavigation(navController = nav)
             }
         }
     }
 
+    // singleTask: when the app is already open, the deep link arrives here,
+    // NOT in onCreate. Without setIntent() the old intent was kept and the
+    // link was ignored.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
     override fun onResume() {
         super.onResume()
-        // Handle deep links from PayChangu or other sources
-        intent?.data?.let { uri ->
-            if (uri.scheme == "escrowmalawi" && uri.host == "payment") {
-                val tradeId = uri.getQueryParameter("tradeId")
-                val status = uri.getQueryParameter("status") // e.g., "success", "cancelled"
-                
-                if (tradeId != null) {
-                    if (status == "success") {
-                        // Navigate to trade detail or escrow success screen
-                        navController.navigate(Routes.tradeDetail(tradeId)) {
-                            popUpTo(Routes.HOME)
-                        }
-                    }
-                    // Clear the intent data so it doesn't trigger again
-                    intent.data = null
-                }
+        handleDeepLink(intent)
+    }
+
+    private fun handleDeepLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme != "escrowmalawi" || uri.host != "payment") return
+        val tradeId = uri.getQueryParameter("tradeId")
+        val status = uri.getQueryParameter("status") // "success" | "cancelled"
+        val nav = navController
+        if (tradeId != null && status == "success" && nav != null) {
+            nav.navigate(Routes.tradeDetail(tradeId)) {
+                popUpTo(Routes.HOME)
             }
         }
+        // consume so it doesn't re-trigger on the next resume
+        intent.data = null
     }
 }

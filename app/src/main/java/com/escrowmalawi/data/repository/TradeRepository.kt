@@ -1,5 +1,7 @@
 package com.escrowmalawi.data.repository
 
+import com.escrowmalawi.blockchain.ChainAction
+import com.escrowmalawi.blockchain.ChainRecorder
 import com.escrowmalawi.data.model.ListingStatus
 import com.escrowmalawi.data.model.Trade
 import com.escrowmalawi.data.model.TradeStatus
@@ -24,7 +26,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class TradeRepository @Inject constructor(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val chainRecorder: ChainRecorder
 ) {
     private val tradesCollection = firestore.collection("trades")
     private val notificationsCollection = firestore.collection("notifications")
@@ -99,6 +102,7 @@ class TradeRepository @Inject constructor(
                 ))
             }.await()
 
+            chainRecorder.record(docId, ChainAction.CREATE)
             Result.success(trade)
         } catch (e: Exception) {
             Result.failure(e)
@@ -160,6 +164,7 @@ class TradeRepository @Inject constructor(
                 ))
                 null
             }.await()
+            chainRecorder.record(tradeId, ChainAction.ACCEPT)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -202,6 +207,7 @@ class TradeRepository @Inject constructor(
                 ))
                 null
             }.await()
+            chainRecorder.record(tradeId, ChainAction.DELIVER)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -234,6 +240,7 @@ class TradeRepository @Inject constructor(
                     ))
                 }
             }.await()
+            chainRecorder.record(tradeId, ChainAction.REJECT)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -299,6 +306,7 @@ class TradeRepository @Inject constructor(
                     ))
                 }
             }.await()
+            chainRecorder.record(tradeId, ChainAction.CONFIRM)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -354,6 +362,7 @@ class TradeRepository @Inject constructor(
                 }
                 null
             }.await()
+            chainRecorder.record(tradeId, ChainAction.REFUND)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -382,6 +391,7 @@ class TradeRepository @Inject constructor(
                     return@addSnapshotListener
                 }
                 val trades = snap?.toObjects(Trade::class.java) ?: emptyList()
+                chainRecorder.syncBuyerPayments(trades)
                 // Sort client-side to avoid needing a composite index
                 trySend(trades.sortedByDescending { it.createdAt?.seconds ?: 0 })
             }

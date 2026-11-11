@@ -48,7 +48,11 @@ data class Trade(
     // Timestamps that drive the escrow automation rules (null until that step happens)
     val acceptedAt: Timestamp? = null,  // seller accepted
     val paidAt: Timestamp? = null,      // payment confirmed (set by the backend)
-    val deliveredAt: Timestamp? = null  // seller marked the item delivered
+    val deliveredAt: Timestamp? = null,
+    val chainDone: List<String> = emptyList(),// seller marked the item delivered
+    val chainTxHash: String = "",       // latest confirmed P2PEscrow transaction (Sepolia)
+    val chainError: String = "",        // why the last on-chain record failed (empty if fine)
+    val chainPaid: Boolean = false      // payment recorded on-chain by the buyer's device
 )
 
 // ── EscrowState ──────────────────────────────────────────────────────────────
