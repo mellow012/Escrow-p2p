@@ -85,6 +85,10 @@ class EthereumService @Inject constructor(
     suspend fun sellerRefund(c: Credentials, tradeId: String): Result<String> =
         send(c, fn("sellerRefund", Bytes32(idBytes(tradeId))))
 
+    /** [evidence] is the dispute text + photo links; only its keccak256 hash goes on-chain. */
+    suspend fun openDispute(c: Credentials, tradeId: String, evidence: String): Result<String> =
+        send(c, fn("openDispute", Bytes32(idBytes(tradeId)), Bytes32(Hash.sha3(evidence.toByteArray(Charsets.UTF_8)))))
+
     // ── Wallet balance (for the "gas balance" row in Profile) ────────────
 
     suspend fun getBalanceEth(address: String): Result<String> = withContext(Dispatchers.IO) {

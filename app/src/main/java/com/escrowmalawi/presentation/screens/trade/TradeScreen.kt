@@ -327,6 +327,7 @@ fun TradeStatusBadge(status: String) {
         TradeStatus.COMPLETED.name -> EscrowGreen to "Done"
         TradeStatus.REFUNDED.name  -> EscrowRed to "Refunded"
         TradeStatus.REJECTED.name  -> Color.Gray to "Rejected"
+        TradeStatus.DISPUTED.name  -> EscrowAmber to "Disputed"
         else                       -> Color.Gray to "Unknown"
     }
     Surface(
@@ -354,6 +355,7 @@ fun TradeDetailScreen(
     currentUserUid: String,
     onBack: () -> Unit,
     onGoToEscrow: (String) -> Unit,
+    onOpenDispute: (String) -> Unit = {},
     viewModel: TradeViewModel = hiltViewModel(),
     reviewViewModel: ReviewViewModel = hiltViewModel()
 ) {
@@ -613,6 +615,40 @@ fun TradeDetailScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("You've rated this trade. Thanks for the feedback!", fontSize = 13.sp, color = OnSurfaceDark.copy(0.7f))
                     }
+                }
+            }
+
+            // Disputes: report a problem after payment, or follow an existing dispute
+            if (trade.status == TradeStatus.DISPUTED.name) {
+                Text(
+                    "This trade is frozen while a moderator reviews the dispute.",
+                    fontSize = 13.sp,
+                    color = EscrowAmber
+                )
+            }
+            val canReportProblem = (isBuyer || isSeller) &&
+                    trade.status == TradeStatus.ACTIVE.name && trade.txHash.isNotBlank()
+            if (trade.disputeOpenedBy.isNotBlank()) {
+                OutlinedButton(
+                    onClick = { onOpenDispute(trade.id) },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EscrowAmber)
+                ) {
+                    Icon(Icons.Default.Gavel, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("View dispute", fontWeight = FontWeight.SemiBold)
+                }
+            } else if (canReportProblem) {
+                OutlinedButton(
+                    onClick = { onOpenDispute(trade.id) },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EscrowRed)
+                ) {
+                    Icon(Icons.Default.Report, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Report a problem", fontWeight = FontWeight.SemiBold)
                 }
             }
         }

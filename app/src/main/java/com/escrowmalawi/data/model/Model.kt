@@ -24,7 +24,8 @@ enum class TradeStatus {
     ACTIVE,     // Seller accepted; funds locked in escrow
     COMPLETED,  // Buyer confirmed delivery; funds released
     REFUNDED,   // Seller failed; buyer refunded
-    REJECTED    // Seller rejected the trade request
+    REJECTED,   // Seller rejected the trade request
+    DISPUTED    // Frozen: a party opened a dispute; the moderator decides
 }
 
 data class Trade(
@@ -52,7 +53,8 @@ data class Trade(
     val chainDone: List<String> = emptyList(),// seller marked the item delivered
     val chainTxHash: String = "",       // latest confirmed P2PEscrow transaction (Sepolia)
     val chainError: String = "",        // why the last on-chain record failed (empty if fine)
-    val chainPaid: Boolean = false      // payment recorded on-chain by the buyer's device
+    val chainPaid: Boolean = false,     // payment recorded on-chain by the buyer's device
+    val disputeOpenedBy: String = ""    // "buyer" or "seller" once a dispute is opened
 )
 
 // ── EscrowState ──────────────────────────────────────────────────────────────
@@ -146,3 +148,19 @@ data class ListingEnquiry(
 
 /** True when a listing can't be bought any more (out of stock or not active). */
 fun Listing.isSoldOut(): Boolean = status != ListingStatus.ACTIVE.name || quantity <= 0
+
+// ── Dispute ──────────────────────────────────────────────────────────────────
+/** Firestore: disputes/{tradeId}. The backend (moderator console) adds the AI analysis and the decision. */
+data class Dispute(
+    val tradeId: String = "",
+    val status: String = "open",            // "open" | "resolved"
+    val openedByRole: String = "",          // "buyer" | "seller"
+    val buyerStatement: String = "",
+    val sellerStatement: String = "",
+    val buyerEvidence: List<String> = emptyList(),   // Cloudinary image URLs
+    val sellerEvidence: List<String> = emptyList(),
+    val resolution: String = "",            // "release" (seller paid) | "refund" (buyer refunded)
+    val moderatorNote: String = "",
+    val resolveTxHash: String = "",
+    val createdAt: Timestamp? = null
+)

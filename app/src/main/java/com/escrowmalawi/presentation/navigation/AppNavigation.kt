@@ -25,6 +25,7 @@ import com.escrowmalawi.presentation.screens.notifications.NotificationsScreen
 import com.escrowmalawi.presentation.screens.profile.ProfileScreen
 import com.escrowmalawi.presentation.screens.splash.SplashScreen
 import com.escrowmalawi.presentation.screens.trade.CreateTradeScreen
+import com.escrowmalawi.presentation.screens.trade.DisputeScreen
 import com.escrowmalawi.presentation.screens.trade.TradeDetailScreen
 import com.escrowmalawi.presentation.screens.trade.TradeListScreen
 import com.escrowmalawi.presentation.viewmodel.AuthViewModel
@@ -43,6 +44,7 @@ object Routes {
     const val CREATE_TRADE   = "create_trade?sellerUid={sellerUid}&sellerName={sellerName}&sellerPhone={sellerPhone}&desc={desc}&amount={amount}&listingId={listingId}"
     const val TRADE_DETAIL   = "trade_detail/{tradeId}"
     const val ESCROW         = "escrow/{tradeId}"
+    const val DISPUTE        = "dispute/{tradeId}"
     const val CREATE_LISTING = "create_listing"
     const val LISTING_DETAIL = "listing_detail/{listingId}"
     const val MY_LISTINGS    = "my_listings"
@@ -53,6 +55,7 @@ object Routes {
 
     fun tradeDetail(id: String)   = "trade_detail/$id"
     fun escrow(id: String)        = "escrow/$id"
+    fun dispute(id: String)       = "dispute/$id"
     fun listingDetail(id: String) = "listing_detail/$id"
     fun catalog(sellerUid: String) = "catalog/${android.net.Uri.encode(sellerUid)}"
     fun createTrade(
@@ -295,7 +298,17 @@ fun AppNavigation(
                     tradeId = tradeId,
                     currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: currentUser?.uid ?: "",
                     onBack = { navController.popBackStack() },
-                    onGoToEscrow = { id -> navController.navigate(Routes.escrow(id)) }
+                    onGoToEscrow = { id -> navController.navigate(Routes.escrow(id)) },
+                    onOpenDispute = { id -> navController.navigate(Routes.dispute(id)) }
+                )
+            }
+
+            composable(Routes.DISPUTE) { backStack ->
+                val tradeId = backStack.arguments?.getString("tradeId") ?: return@composable
+                DisputeScreen(
+                    tradeId = tradeId,
+                    currentUserUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: currentUser?.uid ?: "",
+                    onBack = { navController.popBackStack() }
                 )
             }
 

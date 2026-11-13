@@ -381,8 +381,14 @@ class ReviewViewModel @Inject constructor(
 @HiltViewModel
 class NotificationViewModel @Inject constructor(
     private val notificationRepository: com.escrowmalawi.data.repository.NotificationRepository,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val notificationWatcher: com.escrowmalawi.data.repository.NotificationWatcher
 ) : ViewModel() {
+
+    init {
+        // Start system (status-bar) alerts for this user once they are signed in
+        authRepository.currentFirebaseUser()?.uid?.let { notificationWatcher.ensureWatching(it) }
+    }
 
     val notifications: StateFlow<List<com.escrowmalawi.data.model.Notification>> = flow {
         val uid = authRepository.currentFirebaseUser()?.uid ?: return@flow

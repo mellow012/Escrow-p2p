@@ -74,6 +74,27 @@ class StorageRepository @Inject constructor(
         }
     }
 
+    /** Upload one dispute evidence photo (folder disputes/{tradeId}) and return its public URL. */
+    suspend fun uploadEvidenceImage(
+        context : Context,
+        tradeId : String,
+        imageUri: Uri
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            withTimeout(TIMEOUT_MS) {
+                val raw = context.contentResolver
+                    .openInputStream(imageUri)
+                    ?.use { it.readBytes() }
+                    ?: return@withTimeout Result.failure(Exception("Cannot read image"))
+                val bytes = compressImage(raw)
+                Result.success(postToCloudinary(bytes, "disputes/$tradeId"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Evidence upload failed", e)
+            Result.failure(e)
+        }
+    }
+
     /** Delete a Cloudinary image by public ID (best-effort, non-fatal). */
     suspend fun deleteImage(imageUrl: String): Result<Unit> {
         // Cloudinary deletion via unsigned API requires a signed request (needs API secret).

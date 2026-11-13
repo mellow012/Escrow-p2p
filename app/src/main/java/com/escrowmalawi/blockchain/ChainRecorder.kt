@@ -21,7 +21,7 @@ import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
 
-enum class ChainAction { CREATE, ACCEPT, REJECT, PAYMENT, DELIVER, CONFIRM, REFUND }
+enum class ChainAction { CREATE, ACCEPT, REJECT, PAYMENT, DELIVER, CONFIRM, REFUND, DISPUTE }
 
 /**
  * Keeps the P2PEscrow contract in step with each trade.
@@ -62,6 +62,7 @@ class ChainRecorder @Inject constructor(
     private val buyerActions = setOf(ChainAction.CREATE, ChainAction.PAYMENT, ChainAction.CONFIRM)
 
     private val trades = firestore.collection("trades")
+    private val disputes = firestore.collection("disputes")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val queued: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
@@ -87,14 +88,18 @@ class ChainRecorder @Inject constructor(
         when (t.status) {
             TradeStatus.PENDING.name -> Unit
             TradeStatus.REJECTED.name -> steps += ChainAction.REJECT
-            else -> { // ACTIVE, COMPLETED, REFUNDED
+            else -> { // ACTIVE, COMPLETED, REFUNDED, DISPUTED
                 steps += ChainAction.ACCEPT
-                val completed = t.status == TradeStatus.COMPLETED.name
-                val paid = t.paidAt != null || completed
+                // Once disputed, the moderator (server, Arbiter key) ends the trade on-chain,
+                // so this app never sends CONFIRM or REFUND for a disputed trade.
+                val disputed = t.status == TradeStatus.DISPUTED.name || t.disputeOpenedBy.isNotBlank()
+                val completed = !disputed && t.status == TradeStatus.COMPLETED.name
+                val paid = t.paidAt != null || completed || disputed
                 if (paid) steps += ChainAction.PAYMENT
                 if (paid && (t.deliveredAt != null || completed)) steps += ChainAction.DELIVER
+                if (disputed) steps += ChainAction.DISPUTE
                 if (completed) steps += ChainAction.CONFIRM
-                if (t.status == TradeStatus.REFUNDED.name && t.paidAt != null) steps += ChainAction.REFUND
+                if (!disputed && t.status == TradeStatus.REFUNDED.name && t.paidAt != null) steps += ChainAction.REFUND
             }
         }
         return steps
@@ -129,16 +134,20 @@ class ChainRecorder @Inject constructor(
         }
     }
 
+    /** Which side signs a step. A dispute is signed by whoever opened it. */
+    private fun signsAsBuyer(trade: Trade, action: ChainAction): Boolean =
+        if (action == ChainAction.DISPUTE) trade.disputeOpenedBy != "seller" else action in buyerActions
+
     private fun canSign(uid: String, trade: Trade, action: ChainAction): Boolean {
         if (demoMode) return true
-        return if (action in buyerActions) uid == trade.buyerUid else uid == trade.sellerUid
+        return if (signsAsBuyer(trade, action)) uid == trade.buyerUid else uid == trade.sellerUid
     }
 
     private suspend fun sendStep(uid: String, trade: Trade, action: ChainAction): Boolean {
         val credentials: Credentials
         val sellerAddress: String
         if (demoMode) {
-            credentials = ethereum.credentialsFor(if (action in buyerActions) demoBuyerKey else demoSellerKey)
+            credentials = ethereum.credentialsFor(if (signsAsBuyer(trade, action)) demoBuyerKey else demoSellerKey)
             sellerAddress = ethereum.addressOf(demoSellerKey)
         } else {
             val privateKey = walletManager.getPrivateKey(uid)
@@ -168,6 +177,7 @@ class ChainRecorder @Inject constructor(
                 ChainAction.DELIVER -> ethereum.markDelivered(credentials, trade.blockchainTradeId)
                 ChainAction.CONFIRM -> ethereum.confirmReceipt(credentials, trade.blockchainTradeId)
                 ChainAction.REFUND -> ethereum.sellerRefund(credentials, trade.blockchainTradeId)
+                ChainAction.DISPUTE -> ethereum.openDispute(credentials, trade.blockchainTradeId, evidenceFor(trade))
             }
             if (result.isSuccess) {
                 saveSuccess(trade.id, action, result.getOrThrow())
@@ -184,6 +194,15 @@ class ChainRecorder @Inject constructor(
 
         saveError(trade.id, action, lastError?.message ?: "Unknown error")
         return false
+    }
+
+    /** Text hashed on-chain as the dispute evidence: the opener's statement and photo links. */
+    private suspend fun evidenceFor(trade: Trade): String {
+        val role = if (trade.disputeOpenedBy == "seller") "seller" else "buyer"
+        val d = runCatching { disputes.document(trade.id).get().await() }.getOrNull()
+        val statement = d?.getString("${role}Statement").orEmpty()
+        val photos = (d?.get("${role}Evidence") as? List<*>)?.joinToString(",") { it.toString() }.orEmpty()
+        return "${trade.id}|$role|$statement|$photos"
     }
 
     private suspend fun saveSuccess(tradeId: String, action: ChainAction, txHash: String) {

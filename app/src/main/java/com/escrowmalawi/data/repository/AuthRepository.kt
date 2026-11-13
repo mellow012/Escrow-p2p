@@ -94,7 +94,14 @@ class AuthRepository @Inject constructor(
     // ── Helpers ──────────────────────────────────────────────────────────
     fun currentFirebaseUser(): FirebaseUser? = auth.currentUser
 
-    suspend fun getUserProfile(uid: String): User? {
+    /** A profile with a blank name would put blank names on every listing and trade; fall back to the email prefix. */
+    private fun User.withDisplayName(): User =
+        if (name.isNotBlank()) this
+        else copy(name = email.substringBefore("@").ifBlank { "User" })
+
+    suspend fun getUserProfile(uid: String): User? = loadUserProfile(uid)?.withDisplayName()
+
+    private suspend fun loadUserProfile(uid: String): User? {
         return try {
             val cached = try {
                 firestore.collection("users").document(uid)
@@ -127,7 +134,7 @@ class AuthRepository @Inject constructor(
         // Rebuild it so other users can trade with this account.
         val fallback = User(
             uid = firebaseUser.uid,
-            name = firebaseUser.displayName
+            name = firebaseUser.displayName?.takeIf { it.isNotBlank() }
                 ?: firebaseUser.email?.substringBefore("@")
                 ?: "User",
             email = firebaseUser.email ?: "",

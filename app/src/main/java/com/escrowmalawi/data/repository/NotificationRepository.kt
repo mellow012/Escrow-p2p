@@ -1,8 +1,8 @@
 package com.escrowmalawi.data.repository
 
+import android.util.Log
 import com.escrowmalawi.data.model.Notification
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -29,13 +29,17 @@ class NotificationRepository @Inject constructor(
     }
 
     fun getNotifications(recipientUid: String): Flow<List<Notification>> = callbackFlow {
+        // No orderBy here: whereEqualTo + orderBy needs a composite index, and without it
+        // the query fails and the list stays empty. We sort on the device instead.
         val listener = notificationsCollection
             .whereEqualTo("recipientUid", recipientUid)
-            .orderBy("createdAt", Query.Direction.DESCENDING)
             .addSnapshotListener { snap, err ->
-                if (err != null) return@addSnapshotListener
+                if (err != null) {
+                    Log.e("NotificationRepository", "Notifications query failed: ${err.message}")
+                    return@addSnapshotListener
+                }
                 val notifications = snap?.toObjects(Notification::class.java) ?: emptyList()
-                trySend(notifications)
+                trySend(notifications.sortedByDescending { it.createdAt.seconds })
             }
         awaitClose { listener.remove() }
     }
@@ -65,7 +69,7 @@ class NotificationRepository @Inject constructor(
                 .whereEqualTo("recipientUid", recipientUid)
                 .get()
                 .await()
-            
+
             for (doc in snapshots.documents) {
                 batch.delete(doc.reference)
             }
