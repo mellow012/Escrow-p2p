@@ -42,8 +42,12 @@ fun SellerCatalogScreen(
     onListingClick: (String) -> Unit,
     onAddProduct: () -> Unit,
     viewModel: MarketplaceViewModel = hiltViewModel(),
-    authViewModel: com.escrowmalawi.presentation.viewmodel.AuthViewModel = hiltViewModel()
+    authViewModel: com.escrowmalawi.presentation.viewmodel.AuthViewModel = hiltViewModel(),
+    followViewModel: com.escrowmalawi.presentation.viewmodel.FollowViewModel = hiltViewModel()
 ) {
+    val followedUids by followViewModel.followedUids.collectAsStateWithLifecycle()
+    var followers by remember { mutableIntStateOf(0) }
+    LaunchedEffect(sellerUid, followedUids) { followers = followViewModel.followerCount(sellerUid) }
     val listings by viewModel.sellerListingsFlow(sellerUid).collectAsStateWithLifecycle(initialValue = emptyList())
     val rating by viewModel.sellerRatingFlow(sellerUid).collectAsStateWithLifecycle(initialValue = 0.0 to 0)
     val isOwner = sellerUid == currentUserUid
@@ -151,10 +155,15 @@ fun SellerCatalogScreen(
         ) {
             // ── Seller Header ────────────────────────────────────────────
             item {
+                val headerName = listings.firstOrNull()?.sellerName ?: "Seller"
                 SellerHeader(
-                    sellerName = listings.firstOrNull()?.sellerName ?: "Seller",
+                    sellerName = headerName,
                     rating = rating.first,
-                    ratingCount = rating.second
+                    ratingCount = rating.second,
+                    followers = followers,
+                    showFollow = !isOwner,
+                    isFollowing = sellerUid in followedUids,
+                    onToggleFollow = { followViewModel.toggle(sellerUid, headerName) }
                 )
             }
 
@@ -273,7 +282,15 @@ fun SellerCatalogScreen(
 }
 
 @Composable
-private fun SellerHeader(sellerName: String, rating: Double, ratingCount: Int) {
+private fun SellerHeader(
+    sellerName: String,
+    rating: Double,
+    ratingCount: Int,
+    followers: Int,
+    showFollow: Boolean,
+    isFollowing: Boolean,
+    onToggleFollow: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -297,7 +314,7 @@ private fun SellerHeader(sellerName: String, rating: Double, ratingCount: Int) {
             )
         }
         Spacer(Modifier.width(16.dp))
-        Column {
+        Column(Modifier.weight(1f)) {
             Text(sellerName, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = OnSurfaceDark)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Star, null, tint = EscrowGreen, modifier = Modifier.size(16.dp))
@@ -308,6 +325,15 @@ private fun SellerHeader(sellerName: String, rating: Double, ratingCount: Int) {
                     color = OnSurfaceDark.copy(0.6f)
                 )
             }
+            Text(
+                "$followers follower${if (followers == 1) "" else "s"}",
+                fontSize = 12.sp,
+                color = OnSurfaceDark.copy(0.5f)
+            )
+        }
+        if (showFollow) {
+            Spacer(Modifier.width(8.dp))
+            FollowButton(isFollowing = isFollowing, onClick = onToggleFollow)
         }
     }
 }

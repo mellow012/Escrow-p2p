@@ -25,7 +25,8 @@ class MarketplaceViewModel @Inject constructor(
     private val listingRepository: ListingRepository,
     private val storageRepository : StorageRepository,
     private val authRepository    : AuthRepository,
-    private val notificationRepository: NotificationRepository
+    private val notificationRepository: NotificationRepository,
+    private val followRepository: com.escrowmalawi.data.repository.FollowRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ListingUiState>(ListingUiState.Idle)
@@ -156,6 +157,19 @@ class MarketplaceViewModel @Inject constructor(
                 android.util.Log.e("MarketplaceVM", "Firestore save failed", err)
                 ListingUiState.Error("Save failed: ${err?.localizedMessage ?: "Unknown error"}")
             }
+
+            // Tell the people who follow this seller. NonCancellable so leaving the screen can't cut it short.
+            if (result.isSuccess) {
+                val created = result.getOrNull()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    followRepository.notifyFollowers(
+                        sellerUid = profile.uid,
+                        title = "New from ${profile.name.trim().ifBlank { "a seller you follow" }}",
+                        message = "${title.trim()} · MWK ${"%,.0f".format(price)} is now in the marketplace.",
+                        listingId = created?.id.orEmpty()
+                    )
+                }
+            }
         }
     }
 
@@ -219,9 +233,11 @@ class MarketplaceViewModel @Inject constructor(
 
     fun restock(listingId: String, quantity: Int) {
         viewModelScope.launch {
+            val before = listingFlow(listingId).first()
             listingRepository.updateListingQuantity(listingId, quantity)
             if (quantity > 0) {
                 // Notify interested buyers
+                val alerted = mutableSetOf<String>()
                 listingRepository.getEnquiriesForListing(listingId, pendingOnly = true).first().forEach { enquiry ->
                     notificationRepository.sendNotification(
                         Notification(
@@ -234,6 +250,20 @@ class MarketplaceViewModel @Inject constructor(
                     )
                     // Mark enquiry as responded
                     listingRepository.updateEnquiryStatus(enquiry.id, "RESPONDED")
+                    alerted += enquiry.userUid
+                }
+
+                // Followers get a back-in-stock alert too (unless the "notify me" alert already reached them)
+                if (before != null && before.quantity <= 0) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        followRepository.notifyFollowers(
+                            sellerUid = before.sellerUid,
+                            title = "Back in stock",
+                            message = "${before.title.trim()} from ${before.sellerName.trim()} is back in stock.",
+                            listingId = listingId,
+                            exclude = alerted
+                        )
+                    }
                 }
             }
         }

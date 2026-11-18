@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.escrowmalawi.MainActivity
+import com.escrowmalawi.data.local.AppSettings
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -94,6 +95,7 @@ class NotificationWatcher @Inject constructor(
     }
 
     private fun show(id: String, title: String, message: String) {
+        if (!AppSettings.alertsEnabled(context)) return
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED

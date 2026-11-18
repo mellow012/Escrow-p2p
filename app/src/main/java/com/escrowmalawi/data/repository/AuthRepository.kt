@@ -198,6 +198,38 @@ class AuthRepository @Inject constructor(
         return combine(chunkFlows) { maps -> maps.reduce { acc, m -> acc + m } }
     }
 
+    /** Name + phone only (never touches the wallet). */
+    suspend fun updateBasics(uid: String, name: String, phone: String): Result<Unit> = try {
+        withNetworkTimeout {
+            firestore.collection("users").document(uid).set(
+                mapOf("uid" to uid, "name" to name, "phone" to phone),
+                SetOptions.merge()
+            ).await()
+        }
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    suspend fun setProfilePicture(uid: String, url: String): Result<Unit> = try {
+        withNetworkTimeout {
+            firestore.collection("users").document(uid).set(
+                mapOf("uid" to uid, "profilePictureUrl" to url),
+                SetOptions.merge()
+            ).await()
+        }
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    suspend fun sendPasswordReset(email: String): Result<Unit> = try {
+        auth.sendPasswordResetEmail(email).await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     suspend fun updateProfile(
         uid: String,
         name: String,

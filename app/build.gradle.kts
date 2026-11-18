@@ -103,6 +103,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.0")
     // Blockchain
     implementation(libs.web3j)
+    implementation(libs.kotlinx.coroutines.play.services)
 
 
     testImplementation(libs.junit)

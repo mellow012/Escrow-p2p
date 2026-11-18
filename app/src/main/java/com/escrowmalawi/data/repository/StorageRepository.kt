@@ -95,6 +95,27 @@ class StorageRepository @Inject constructor(
         }
     }
 
+    /** Upload one identity-verification photo (folder verification/{uid}) and return its URL. */
+    suspend fun uploadVerificationImage(
+        context : Context,
+        uid     : String,
+        imageUri: Uri
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            withTimeout(TIMEOUT_MS) {
+                val raw = context.contentResolver
+                    .openInputStream(imageUri)
+                    ?.use { it.readBytes() }
+                    ?: return@withTimeout Result.failure(Exception("Cannot read image"))
+                val bytes = compressImage(raw)
+                Result.success(postToCloudinary(bytes, "verification/$uid"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Verification upload failed", e)
+            Result.failure(e)
+        }
+    }
+
     /** Delete a Cloudinary image by public ID (best-effort, non-fatal). */
     suspend fun deleteImage(imageUrl: String): Result<Unit> {
         // Cloudinary deletion via unsigned API requires a signed request (needs API secret).

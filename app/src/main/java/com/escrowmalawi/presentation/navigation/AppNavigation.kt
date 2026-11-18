@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.escrowmalawi.presentation.theme.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -22,7 +23,11 @@ import com.escrowmalawi.presentation.screens.escrow.EscrowScreen
 import com.escrowmalawi.presentation.screens.home.HomeScreen
 import com.escrowmalawi.presentation.screens.marketplace.*
 import com.escrowmalawi.presentation.screens.notifications.NotificationsScreen
+import com.escrowmalawi.presentation.screens.moderator.ModeratorScreen
+import com.escrowmalawi.presentation.screens.profile.FollowingScreen
+import com.escrowmalawi.presentation.screens.profile.HelpScreen
 import com.escrowmalawi.presentation.screens.profile.ProfileScreen
+import com.escrowmalawi.presentation.screens.activity.ActivityScreen
 import com.escrowmalawi.presentation.screens.splash.SplashScreen
 import com.escrowmalawi.presentation.screens.trade.CreateTradeScreen
 import com.escrowmalawi.presentation.screens.trade.DisputeScreen
@@ -41,6 +46,10 @@ object Routes {
     const val HOME           = "home"
     const val MARKETPLACE    = "marketplace"
     const val TRADE_LIST     = "trade_list"
+    const val ACTIVITY       = "activity"
+    const val HELP           = "help"
+    const val MODERATOR      = "moderator"
+    const val FOLLOWING      = "following"
     const val CREATE_TRADE   = "create_trade?sellerUid={sellerUid}&sellerName={sellerName}&sellerPhone={sellerPhone}&desc={desc}&amount={amount}&listingId={listingId}"
     const val TRADE_DETAIL   = "trade_detail/{tradeId}"
     const val ESCROW         = "escrow/{tradeId}"
@@ -82,6 +91,7 @@ sealed class BottomNavItem(val route: String, val icon: ImageVector, val label: 
     object Home : BottomNavItem(Routes.HOME, Icons.Default.Home, "Home")
     object Marketplace : BottomNavItem(Routes.MARKETPLACE, Icons.Default.Storefront, "Market")
     object Trades : BottomNavItem(Routes.TRADE_LIST, Icons.Default.SwapHoriz, "Trades")
+    object Activity : BottomNavItem(Routes.ACTIVITY, Icons.Default.History, "Activity")
 }
 
 // ── Root nav host ─────────────────────────────────────────────────────────────
@@ -96,22 +106,30 @@ fun AppNavigation(
 
     // Only show bottom bar on main screens
     val showBottomBar = currentDestination?.route in listOf(
-        Routes.HOME, Routes.MARKETPLACE, Routes.TRADE_LIST
+        Routes.HOME, Routes.MARKETPLACE, Routes.TRADE_LIST, Routes.ACTIVITY
     )
 
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
+                NavigationBar(containerColor = SurfaceDark) {
                     val items = listOf(
                         BottomNavItem.Home,
                         BottomNavItem.Marketplace,
-                        BottomNavItem.Trades
+                        BottomNavItem.Trades,
+                        BottomNavItem.Activity
                     )
                     items.forEach { item ->
                         NavigationBarItem(
                             icon = { Icon(item.icon, contentDescription = item.label) },
                             label = { Text(item.label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = EscrowGreen,
+                                selectedTextColor = EscrowGreen,
+                                indicatorColor = EscrowGreen.copy(alpha = 0.15f),
+                                unselectedIconColor = OnSurfaceDark.copy(alpha = 0.55f),
+                                unselectedTextColor = OnSurfaceDark.copy(alpha = 0.55f)
+                            ),
                             selected = currentDestination?.hierarchy?.any { it.route == item.route } == true,
                             onClick = {
                                 navController.navigate(item.route) {
@@ -153,7 +171,8 @@ fun AppNavigation(
                             popUpTo(Routes.LOGIN) { inclusive = true }
                         }
                     },
-                    onNavigateToRegister = { navController.navigate(Routes.REGISTER) }
+                    onNavigateToRegister = { navController.navigate(Routes.REGISTER) },
+                    viewModel = authViewModel
                 )
             }
 
@@ -164,7 +183,8 @@ fun AppNavigation(
                             popUpTo(Routes.REGISTER) { inclusive = true }
                         }
                     },
-                    onNavigateToLogin = { navController.popBackStack() }
+                    onNavigateToLogin = { navController.popBackStack() },
+                    viewModel = authViewModel
                 )
             }
 
@@ -174,7 +194,8 @@ fun AppNavigation(
                         navController.navigate(Routes.HOME) {
                             popUpTo(Routes.COMPLETE_PROFILE) { inclusive = true }
                         }
-                    }
+                    },
+                    viewModel = authViewModel
                 )
             }
 
@@ -189,6 +210,7 @@ fun AppNavigation(
                     onNavigateToCreateListing = { navController.navigate(Routes.CREATE_LISTING) },
                     onNavigateToProfile = { navController.navigate(Routes.PROFILE) },
                     onNavigateToNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onNavigateToActivity = { navController.navigate(Routes.ACTIVITY) },
                     onListingClick = { id -> navController.navigate(Routes.listingDetail(id)) },
                     onLogout = {
                         authViewModel.logout()
@@ -332,7 +354,32 @@ fun AppNavigation(
                     },
                     onVerifyClick = { navController.navigate(Routes.VERIFY_IDENTITY) },
                     onViewCatalog = { uid -> navController.navigate(Routes.catalog(uid)) },
-                    onManageListings = { navController.navigate(Routes.MY_LISTINGS) }
+                    onManageListings = { navController.navigate(Routes.MY_LISTINGS) },
+                    onHelp = { navController.navigate(Routes.HELP) },
+                    onOpenModerator = { navController.navigate(Routes.MODERATOR) },
+                    onOpenFollowing = { navController.navigate(Routes.FOLLOWING) },
+                    authViewModel = authViewModel
+                )
+            }
+
+            composable(Routes.FOLLOWING) {
+                FollowingScreen(
+                    onBack = { navController.popBackStack() },
+                    onSellerClick = { uid -> navController.navigate(Routes.catalog(uid)) }
+                )
+            }
+
+            composable(Routes.MODERATOR) {
+                ModeratorScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable(Routes.HELP) {
+                HelpScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable(Routes.ACTIVITY) {
+                ActivityScreen(
+                    onTradeClick = { id -> navController.navigate(Routes.tradeDetail(id)) }
                 )
             }
 
@@ -341,7 +388,6 @@ fun AppNavigation(
                     onBack = { navController.popBackStack() },
                     onComplete = {
                         navController.popBackStack()
-                        // In real app, we would update the user state in Firestore
                     }
                 )
             }

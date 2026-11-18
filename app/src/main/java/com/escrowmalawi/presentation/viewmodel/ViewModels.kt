@@ -183,7 +183,45 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    /** Edit name + phone from the profile screen. [onResult] gets null on success, else an error message. */
+    fun updateBasics(name: String, phone: String, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val uid = authRepository.currentFirebaseUser()?.uid
+            if (uid == null) { onResult("You are signed out"); return@launch }
+            if (name.isBlank()) { onResult("Name cannot be empty"); return@launch }
+            if (phone.isBlank()) { onResult("Phone cannot be empty"); return@launch }
+            val result = authRepository.updateBasics(uid, name.trim(), phone.trim())
+            if (result.isSuccess) loadCurrentUser()
+            onResult(result.exceptionOrNull()?.message)
+        }
+    }
+
+    /** Upload a new profile photo and save its URL. */
+    fun updatePhoto(context: android.content.Context, uri: android.net.Uri, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val uid = authRepository.currentFirebaseUser()?.uid
+            if (uid == null) { onResult("You are signed out"); return@launch }
+            val upload = storageRepository.uploadListingImage(context, "profile_$uid", uri)
+            if (upload.isFailure) { onResult(upload.exceptionOrNull()?.message ?: "Upload failed"); return@launch }
+            val saved = authRepository.setProfilePicture(uid, upload.getOrThrow())
+            if (saved.isSuccess) loadCurrentUser()
+            onResult(saved.exceptionOrNull()?.message)
+        }
+    }
+
+    /** Emails a password reset link to the signed-in user. */
+    fun sendPasswordReset(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val email = authRepository.currentFirebaseUser()?.email
+            if (email.isNullOrBlank()) { onResult("No email on this account"); return@launch }
+            onResult(authRepository.sendPasswordReset(email).exceptionOrNull()?.message)
+        }
+    }
+
     fun resetState() { _uiState.value = AuthUiState.Idle }
+
+    /** Returns the profile for a given uid. Exposed for use in ListingDetailScreen to show seller details. */
+    suspend fun profileOf(uid: String): User? = authRepository.getUserProfile(uid)
 
     private fun loadCurrentUser() {
         viewModelScope.launch {

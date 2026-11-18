@@ -36,8 +36,10 @@ import coil.request.ImageRequest
 import com.escrowmalawi.data.model.Listing
 import com.escrowmalawi.data.model.ListingCategory
 import com.escrowmalawi.data.model.isSoldOut
+import com.escrowmalawi.presentation.components.UserAvatar
 import com.escrowmalawi.presentation.theme.*
 import com.escrowmalawi.presentation.viewmodel.AuthViewModel
+import com.escrowmalawi.presentation.viewmodel.FollowViewModel
 import com.escrowmalawi.presentation.viewmodel.MarketplaceViewModel
 import kotlinx.coroutines.flow.flowOf
 
@@ -78,20 +80,12 @@ fun MarketplaceScreen(
                     }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(Brush.linearGradient(listOf(EscrowGreen, EscrowGreenDark))),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    currentUser?.name?.firstOrNull()?.uppercase() ?: "?",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 13.sp
-                                )
-                            }
+                            UserAvatar(
+                                name = currentUser?.name,
+                                photoUrl = currentUser?.profilePictureUrl,
+                                size = 32.dp,
+                                fontSize = 13.sp
+                            )
                         }
                         DropdownMenu(
                             expanded = showMenu,
@@ -238,8 +232,10 @@ fun ListingDetailScreen(
     onBuyNow      : (Listing) -> Unit,
     onSellerClick : (String) -> Unit = {},
     viewModel     : MarketplaceViewModel = hiltViewModel(),
-    authViewModel  : AuthViewModel        = hiltViewModel()
+    authViewModel  : AuthViewModel        = hiltViewModel(),
+    followViewModel: FollowViewModel = hiltViewModel()
 ) {
+    val followedUids by followViewModel.followedUids.collectAsStateWithLifecycle()
     val listingFlowValue by viewModel.listingFlow(listingId).collectAsStateWithLifecycle(initialValue = null)
     val listing = listingFlowValue
     val sellerRating by (listing?.sellerUid?.let { viewModel.sellerRatingFlow(it) } ?: flowOf(Pair(0.0, 0)))
@@ -481,21 +477,18 @@ fun ListingDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(listOf(EscrowGreen, EscrowGreenDark))),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                listing.sellerName.firstOrNull()?.uppercase() ?: "?",
-                                color = Color.White, fontWeight = FontWeight.Black, fontSize = 18.sp
-                            )
+                        // The listing may have been saved with a blank seller name; use the seller's live profile
+                        val sellerProfile by produceState<com.escrowmalawi.data.model.User?>(null, listing.sellerUid) {
+                            value = authViewModel.profileOf(listing.sellerUid)
                         }
+                        val sellerShownName = listing.sellerName.trim().ifBlank { sellerProfile?.name.orEmpty() }
+                        UserAvatar(
+                            name = sellerShownName,
+                            photoUrl = sellerProfile?.profilePictureUrl
+                        )
                         Column(Modifier.weight(1f)) {
                             Text("Sold by", fontSize = 11.sp, color = OnSurfaceDark.copy(0.4f))
-                            Text(listing.sellerName, fontWeight = FontWeight.SemiBold, color = OnSurfaceDark)
+                            Text(sellerShownName.ifBlank { "Seller" }, fontWeight = FontWeight.SemiBold, color = OnSurfaceDark)
                             if (sellerRating.second > 0) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Icon(Icons.Default.Star, null, tint = EscrowAmber, modifier = Modifier.size(12.dp))
@@ -504,6 +497,12 @@ fun ListingDetailScreen(
                                 }
                             }
                             Text("View catalog", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = EscrowGreen)
+                        }
+                        if (listing.sellerUid != currentUserUid) {
+                            FollowButton(
+                                isFollowing = listing.sellerUid in followedUids,
+                                onClick = { followViewModel.toggle(listing.sellerUid, sellerShownName.ifBlank { "Seller" }) }
+                            )
                         }
                         Icon(Icons.Default.ChevronRight, null, tint = EscrowGreen)
                     }

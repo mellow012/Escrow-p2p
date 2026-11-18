@@ -164,3 +164,26 @@ data class Dispute(
     val resolveTxHash: String = "",
     val createdAt: Timestamp? = null
 )
+
+// ── Identity verification ────────────────────────────────────────────────────
+/** Firestore: verifications/{uid}. A moderator reviews the photos in the web console. */
+data class Verification(
+    val uid: String = "",
+    val name: String = "",
+    val status: String = "",            // "" (never submitted) | "pending" | "approved" | "rejected"
+    val idImageUrl: String = "",
+    val selfieUrl: String = "",
+    val rejectReason: String = "",
+    val submittedAt: Timestamp? = null,
+    val reviewedAt: Timestamp? = null
+)
+
+// ── Follow ───────────────────────────────────────────────────────────────────
+/** Firestore: follows/{followerUid}_{sellerUid}. A buyer follows a seller to see their products first and get stock alerts. */
+data class Follow(
+    val id: String = "",
+    val followerUid: String = "",
+    val sellerUid: String = "",
+    val sellerName: String = "",
+    val createdAt: Timestamp = Timestamp.now()
+)
